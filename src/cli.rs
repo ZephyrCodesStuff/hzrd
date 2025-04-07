@@ -8,6 +8,10 @@ use crate::subnet::Subnet;
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
+
+    /// Path to the configuration file to use (defaults to: `./hzrd.toml`)
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -28,5 +32,9 @@ pub enum Commands {
         /// Run the exploits every `x` seconds
         #[arg(short, long)]
         r#loop: Option<u64>,
+
+        /// If active, submit the flags to the configured host
+        #[arg(long, default_value_t = false)]
+        submit: bool,
     },
 }

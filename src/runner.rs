@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use pyo3::{
     Python,
     types::{PyAnyMethods, PyModule},
@@ -15,10 +15,20 @@ use pyo3::{
 use rayon::prelude::*;
 use regex::Regex;
 
-use crate::{config::Config, subnet::Subnet};
+use crate::{
+    config::{Config, SubmitConfig},
+    submitter,
+    subnet::Subnet,
+};
 
 /// Run an exploit and return the captured flags.
-pub fn run(config: Config, script: Option<PathBuf>, subnet: Option<Subnet>, r#loop: Option<u64>) {
+pub fn run(
+    config: Config,
+    script: Option<PathBuf>,
+    subnet: Option<Subnet>,
+    r#loop: Option<u64>,
+    submit: bool,
+) {
     let subnet = subnet.unwrap_or_else(|| {
         config
             .clone()
@@ -42,7 +52,7 @@ pub fn run(config: Config, script: Option<PathBuf>, subnet: Option<Subnet>, r#lo
         let hosts = get_hosts_from_subnet(&subnet);
 
         // Run exploits against all hosts and collect flags
-        let flags = parallel_run(&hosts, &scripts_to_run, &flag_regex);
+        let flags = parallel_run(config.clone(), &hosts, &scripts_to_run, &flag_regex);
 
         // Process collected flags
         if !flags.is_empty() {
@@ -53,7 +63,24 @@ pub fn run(config: Config, script: Option<PathBuf>, subnet: Option<Subnet>, r#lo
                 println!("{}", flag);
             }
 
-            all_flags.extend(flags);
+            all_flags.extend(flags.clone());
+        }
+
+        // Not given in CLI, nor in config
+        if !submit && !config.hints {
+            warn!(
+                "NOTE: you can submit flags by passing `--submit` along with a host, or by specifying one in the config."
+            );
+            return;
+        }
+
+        // Submit flags
+        if let Some(config) = config.clone().submit {
+            submit_flags(config, flags);
+        } else {
+            error!(
+                "You've asked me to submit flags, but your config does not specify a `[submit]` section!"
+            );
         }
 
         iteration += 1;
@@ -115,6 +142,7 @@ fn get_hosts_from_subnet(subnet: &Subnet) -> Vec<String> {
 }
 
 fn parallel_run(
+    config: Config,
     hosts: &Vec<String>,
     scripts: &Vec<PathBuf>,
     flag_regex: &Option<Regex>,
@@ -130,9 +158,17 @@ fn parallel_run(
             host_captures.append(&mut captured);
         }
 
-        // If enabled, filter flags using the regex
+        // If enabled, capture any flags using the regex
         if let Some(regex) = flag_regex {
-            host_captures.retain(|flag| regex.is_match(flag));
+            let flags_str = host_captures.join(" ");
+            host_captures.clear();
+
+            if let Some(captures) = regex.captures(&flags_str) {
+                host_captures = captures
+                    .iter()
+                    .filter_map(|flag| flag.map(|f| f.as_str().to_string()))
+                    .collect();
+            }
         };
 
         if !host_captures.is_empty() {
@@ -143,6 +179,13 @@ fn parallel_run(
             flags.extend(host_captures);
         } else {
             debug!("The exploit did not work on {host}.");
+
+            if config.hints {
+                if let Some(regex) = flag_regex {
+                    warn!("NOTE: you have configured the following flag regex: `{regex}`.");
+                    warn!("Make sure the regex is not filtering out flags by mistake!");
+                }
+            }
         }
     });
 
@@ -182,4 +225,26 @@ fn run_exploit(remote: String, script: &PathBuf) -> Vec<String> {
             .extract()
             .expect("Failed to get the result of `exploit`!")
     })
+}
+
+fn submit_flags(config: SubmitConfig, flags: Vec<String>) {
+    if flags.is_empty() {
+        debug!("No flags to submit");
+        return;
+    }
+
+    info!(
+        "Submitting {} flags to {}:{}",
+        flags.len(),
+        config.host,
+        config.port
+    );
+
+    match submitter::submit_flags(config, flags) {
+        Ok(points) => {
+            info!("Flags submitted successfully!");
+            info!("Gained {points} points.");
+        }
+        Err(e) => error!("Failed to submit flags: {}", e),
+    }
 }

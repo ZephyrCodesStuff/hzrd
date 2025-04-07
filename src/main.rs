@@ -8,6 +8,7 @@ use log::error;
 mod cli;
 mod config;
 mod runner;
+mod submitter;
 mod subnet;
 
 /// Handle panics by logging with `error!` and exiting with (1)
@@ -40,15 +41,17 @@ fn main() {
         init();
     }
 
-    let config = Config::init();
+    // Get config from CLI-given file, or default `./hzrd.toml`
+    let config = Config::new(args.config);
 
     match args.command {
         Commands::Run {
             script,
             subnet,
             r#loop,
+            submit,
         } => {
-            runner::run(config.clone(), script, subnet, r#loop);
+            runner::run(config.clone(), script, subnet, r#loop, submit);
         }
     }
 }
