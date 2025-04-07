@@ -3,12 +3,11 @@ use std::env;
 use clap::Parser;
 use cli::{Args, Commands};
 use config::Config;
-use log::{error, info, warn};
-use regex::Regex;
+use log::error;
 
 mod cli;
-mod commands;
 mod config;
+mod runner;
 mod subnet;
 
 /// Handle panics by logging with `error!` and exiting with (1)
@@ -44,37 +43,12 @@ fn main() {
     let config = Config::init();
 
     match args.command {
-        Commands::Run { script, subnet } => {
-            let subnet = subnet.unwrap_or_else(|| {
-                config.subnet.expect(
-                    "Subnet is required (either as `--subnet` in the CLI, or in the config file.",
-                )
-            });
-
-            let mut flags: Vec<String> = vec![];
-
-            for host in subnet.0.hosts() {
-                let mut captured = commands::run(script.clone(), host);
-
-                // Make sure all flags pass the regex
-                let regex = Regex::new(&config.flag_regex).unwrap();
-                captured.retain(|flag| regex.is_match(flag));
-
-                if captured.is_empty() {
-                    warn!("The exploit did not work on {host}.");
-                    continue;
-                }
-
-                info!("Flag captured on {host}!");
-                flags.append(&mut captured);
-            }
-
-            if !flags.is_empty() {
-                info!(
-                    "Your exploit captured the following flags: {}",
-                    flags.join(", ")
-                );
-            }
+        Commands::Run {
+            script,
+            subnet,
+            r#loop,
+        } => {
+            runner::run(config.clone(), script, subnet, r#loop);
         }
     }
 }
