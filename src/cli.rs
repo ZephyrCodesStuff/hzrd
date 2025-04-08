@@ -29,6 +29,10 @@ pub enum Commands {
         #[arg(short, long)]
         subnet: Option<Subnet>,
 
+        /// Override the hosts to attack.
+        #[arg(short, long, value_delimiter = ',')]
+        hosts: Option<Vec<String>>,
+
         /// Run the exploits every `x` seconds
         #[arg(short, long)]
         r#loop: Option<u64>,

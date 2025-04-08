@@ -48,10 +48,11 @@ fn main() {
         Commands::Run {
             script,
             subnet,
+            hosts,
             r#loop,
             submit,
         } => {
-            runner::run(config.clone(), script, subnet, r#loop, submit);
+            runner::run(config.clone(), script, subnet, hosts, r#loop, submit);
         }
     }
 }

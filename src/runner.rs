@@ -26,15 +26,22 @@ pub fn run(
     config: Config,
     script: Option<PathBuf>,
     subnet: Option<Subnet>,
+    hosts: Option<Vec<String>>,
     r#loop: Option<u64>,
     submit: bool,
 ) {
-    let subnet = subnet.unwrap_or_else(|| {
-        config
-            .clone()
-            .subnet
-            .expect("Subnet is required (either as `--subnet` in the CLI, or in the config file.")
-    });
+    let hosts_to_use = if let Some(host_list) = hosts.clone() {
+        host_list
+    } else if let Some(subnet_arg) = subnet.clone() {
+        get_hosts_from_subnet(&subnet_arg)
+    } else if let Some(hosts_config) = config.clone().hosts {
+        hosts_config
+    } else if let Some(subnet_config) = config.clone().subnet {
+        get_hosts_from_subnet(&subnet_config)
+    } else {
+        error!("No hosts or subnet provided (either via CLI arguments or in the config file)");
+        std::process::exit(1);
+    };
 
     let mut all_flags: Vec<String> = vec![];
     let mut iteration = 1;
@@ -48,8 +55,8 @@ pub fn run(
         // Set up the flag regex if available
         let flag_regex = config.flag_regex.as_ref().map(|re| Regex::new(re).unwrap());
 
-        // Get a list of hosts from the subnet
-        let hosts = get_hosts_from_subnet(&subnet);
+        // Use hosts_to_use variable instead of generating hosts from subnet again
+        let hosts = hosts_to_use.clone();
 
         // Run exploits against all hosts and collect flags
         let flags = parallel_run(config.clone(), &hosts, &scripts_to_run, &flag_regex);
@@ -66,20 +73,19 @@ pub fn run(
             all_flags.extend(flags.clone());
         }
 
-        // Not given in CLI, nor in config
-        if !submit && !config.hints {
+        // Handle flag submission if enabled
+        if submit {
+            // Submit flags
+            if let Some(config) = config.clone().submit {
+                submit_flags(config, flags);
+            } else {
+                error!(
+                    "You've asked me to submit flags, but your config does not specify a `[submit]` section!"
+                );
+            }
+        } else if config.hints {
             warn!(
                 "NOTE: you can submit flags by passing `--submit` along with a host, or by specifying one in the config."
-            );
-            return;
-        }
-
-        // Submit flags
-        if let Some(config) = config.clone().submit {
-            submit_flags(config, flags);
-        } else {
-            error!(
-                "You've asked me to submit flags, but your config does not specify a `[submit]` section!"
             );
         }
 
@@ -217,13 +223,23 @@ fn run_exploit(remote: String, script: &PathBuf) -> Vec<String> {
         let module = PyModule::from_code(py, &script_content, &script_name, &script_name).unwrap();
         let args = (remote,);
 
-        module
+        match module
             .getattr("exploit")
             .expect("Your exploit script does not contain an `exploit` function!")
             .call1(args)
-            .expect("The `exploit` function failed to execute! Make sure it's defined as: `def exploit(subnet: str)`")
-            .extract()
-            .expect("Failed to get the result of `exploit`!")
+        {
+            Ok(result) => result
+                .extract()
+                .expect("Failed to get the result of `exploit`!"),
+            Err(err) => {
+                error!(
+                    "Error executing `{}` function: {}",
+                    script_name.to_str().unwrap(),
+                    err
+                );
+                Vec::new()
+            }
+        }
     })
 }
 

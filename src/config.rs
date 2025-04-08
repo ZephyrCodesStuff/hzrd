@@ -9,6 +9,9 @@ pub struct Config {
     /// Subnet mask of remotes to attack
     pub subnet: Option<Subnet>,
 
+    /// Hosts to attack
+    pub hosts: Option<Vec<String>>,
+
     /// Regex for the flags to match against.
     ///
     /// If not provided, anything returned from `exploit()` will be
@@ -29,6 +32,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             subnet: None,
+            hosts: None,
             flag_regex: None,
             exploit_dir: None,
             submit: Some(SubmitConfig::default()),
