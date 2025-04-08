@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use pyo3::{
     Python,
@@ -105,7 +106,21 @@ fn wait(r#loop: Option<u64>, iteration: u64) {
                 "Iteration {}: waiting {} seconds before next run...",
                 iteration, loop_seconds
             );
-            thread::sleep(Duration::from_secs(loop_seconds));
+
+            let pb = ProgressBar::new(loop_seconds);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} seconds")
+                    .expect("Failed to set progress bar template")
+                    .progress_chars("#>-"),
+            );
+
+            for _ in 0..loop_seconds {
+                pb.inc(1);
+                thread::sleep(Duration::from_secs(1));
+            }
+
+            pb.finish_with_message("Ready for next iteration");
         }
     }
 }
