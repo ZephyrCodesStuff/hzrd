@@ -40,3 +40,10 @@ pub enum SubmitError {
     #[error("Database error: failed to update flags")]
     DatabaseError(rusqlite::Error),
 }
+
+/// Errors that may happen while attacking
+#[derive(Debug, Error)]
+pub enum AttackError {
+    #[error("The specified exploit path does not exist ({0})")]
+    NoSuchExploitError(std::io::Error),
+}

@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::{Result, anyhow};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use pyo3::{
@@ -20,6 +21,7 @@ use tokio::{signal, task, time};
 use crate::{
     structs::{
         config::{AttackerLoopConfig, Config, SubmitterConfig},
+        errors::AttackError,
         team::Team,
     },
     submitter,
@@ -187,8 +189,12 @@ async fn parallel_run(
                 let mut host_captures: Vec<String> = Vec::new();
 
                 for script_path in scripts.iter() {
-                    let mut captured = run_exploit(&name, &team, script_path, &flag_regex);
-                    host_captures.append(&mut captured);
+                    match run_exploit(&name, &team, script_path, &flag_regex) {
+                        Ok(mut captures) => host_captures.append(&mut captures),
+                        Err(e) => {
+                            error!("Failed to run exploit on {} (\"{}\"): {e:#}", team.ip, name)
+                        }
+                    }
                 }
 
                 // If flags were captured, add them to the shared collection
@@ -199,11 +205,7 @@ async fn parallel_run(
                     let mut flags = flags.lock().unwrap();
                     flags.extend(host_captures);
                 } else {
-                    debug!("The exploit did not work on {} (\"{}\")", team.ip, name);
-
-                    if loop_setting.is_some() {
-                        warn!("No flags captured from {} (\"{}\").", team.ip, name);
-                    }
+                    warn!("The exploit did not work on {} (\"{}\")", team.ip, name);
                 }
             })
         })
@@ -234,7 +236,7 @@ fn run_exploit(
     team: &Team,
     script: &PathBuf,
     flag_regex: &Regex,
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     info!(
         "Running exploit {} on team {} (\"{}\")",
         script.display(),
@@ -243,7 +245,9 @@ fn run_exploit(
     );
 
     let script_content =
-        CString::new(fs::read_to_string(&script).expect("Failed to read exploit script")).unwrap();
+        fs::read_to_string(&script).map_err(|e| anyhow!(AttackError::NoSuchExploitError(e)))?;
+
+    let script_content = CString::new(script_content).unwrap();
     let script_name = CString::new(
         script
             .file_name()
@@ -303,7 +307,7 @@ fn run_exploit(
         }
     });
 
-    flags
+    Ok(flags)
 }
 
 async fn submit_flags(config: &SubmitterConfig, flags: Vec<String>) {
