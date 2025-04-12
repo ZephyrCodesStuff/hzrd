@@ -1,4 +1,4 @@
-# ⚠️ hzrd
+# ⚠️ `hzrd`
 > Reads as *"hazard"*
 
 A robust, efficient CTF flag capturing and submission framework written in Rust.
