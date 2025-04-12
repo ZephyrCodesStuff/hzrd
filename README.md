@@ -1,4 +1,4 @@
-# ⚠️ hzrd
+# ⚠️ `hzrd`
 > Reads as *"hazard"*
 
 A robust, efficient CTF flag capturing and submission framework written in Rust.
@@ -95,7 +95,7 @@ def exploit(ip):
     r.close()
 ```
 
-It is **not** necessary to return anything from this function, as `hzrd` will capture the `stdout` stream and run the configured regex expression on it to extract flags.
+> Again, it is **not** necessary to return anything from this function, as `hzrd` will capture the `stdout` stream and run the configured regex expression on it to extract flags.
 
 ## Configuration
 
@@ -108,8 +108,8 @@ The `hzrd.toml` file contains the following sections:
     - `every`: Seconds between attack iterations
     - `random`: Maximum random delay (in seconds) before attacks
 
-- `attacker.teams`: Target information
-  - Each team entry contains an IP address and optional settings
+  - `attacker.teams`: Target information
+    - Each team entry contains an IP address and optional settings
 
 - `submitter`: Configuration for the flag submission process
   - `type`: Submission method (`tcp` or `http`)
@@ -157,7 +157,7 @@ token = "hzrd"
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+GPL-3 License. See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
