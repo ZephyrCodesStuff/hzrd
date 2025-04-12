@@ -95,7 +95,7 @@ def exploit(ip):
     r.close()
 ```
 
-It is **not** necessary to return anything from this function, as `hzrd` will capture the `stdout` stream and run the configured regex expression on it to extract flags.
+> Again, it is **not** necessary to return anything from this function, as `hzrd` will capture the `stdout` stream and run the configured regex expression on it to extract flags.
 
 ## Configuration
 
