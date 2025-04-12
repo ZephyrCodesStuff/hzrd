@@ -48,7 +48,7 @@ nop = true
 # Configuration for the submitter.
 [submitter]
 
-# Pick between `tcp` and `http`.
+# Pick between `tcp` and `http` and configure them below.
 type = "tcp"
 
 # Database configuration.

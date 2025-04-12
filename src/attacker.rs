@@ -25,13 +25,31 @@ use crate::{
     submitter,
 };
 
+/// Shortcut to create a default-styled progress-bar accepting
+/// a maximum size, with manual incrementing
+macro_rules! progress_bar {
+    ($size:expr) => {
+        ProgressBar::new($size).with_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} seconds",
+                )
+                .expect("Failed to set progress bar template")
+                .progress_chars("#>-"),
+        )
+    };
+}
+
 /// Run an exploit and return the captured flags.
 pub async fn attack(config: &Config) {
     let mut all_flags: Vec<String> = vec![];
     let mut iteration = 1;
 
     loop {
-        wait(iteration, &config.attacker.r#loop).await;
+        // Check if we should wait
+        if let Some(config) = &config.attacker.r#loop {
+            wait(iteration, config).await;
+        }
 
         // Determine which scripts to run
         let scripts_to_run = get_exploits(&config);
@@ -71,75 +89,63 @@ pub async fn attack(config: &Config) {
     }
 }
 
-async fn wait(iteration: u64, loop_config: &Option<AttackerLoopConfig>) {
-    // Check if we need to wait based on the `AttackerLoopConfig`
-    if let Some(config) = loop_config {
-        if iteration > 1 {
-            info!(
-                "Iteration {}: waiting {} seconds before next run...",
-                iteration, config.every
-            );
+async fn wait(iteration: u64, config: &AttackerLoopConfig) {
+    // We don't need to wait on the very first iteration
+    if iteration <= 1 {
+        return;
+    }
 
-            // Progress bar for the waiting period
-            let pb = ProgressBar::new(config.every);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} seconds")
-                    .expect("Failed to set progress bar template")
-                    .progress_chars("#>-"),
-            );
+    info!(
+        "Iteration {}: waiting {} seconds before next run...",
+        iteration, config.every
+    );
 
-            // Wait for the 'every' duration
-            for _ in 0..config.every {
-                // Check for CTRL+C signal and break if received
-                tokio::select! {
-                    _ = time::sleep(Duration::from_secs(1)) => {
-                        pb.inc(1);
-                    }
-                    _ = signal::ctrl_c() => {
-                        warn!("Received CTRL+C. Exiting...");
-                        std::process::exit(0);
-                    }
-                }
+    // Progress bar for the waiting period
+    let pb = progress_bar!(config.every);
+
+    // Wait for the 'every' duration
+    for _ in 0..config.every {
+        // Check for CTRL+C signal and break if received
+        tokio::select! {
+            _ = time::sleep(Duration::from_secs(1)) => {
+                pb.inc(1);
             }
-
-            pb.finish_and_clear();
-
-            // Apply random delay if specified
-            if let Some(random_delay) = config.random {
-                let mut rng = rand::rng();
-                let delay = rng.random_range(0..=random_delay);
-
-                let pb = ProgressBar::new(delay);
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} seconds")
-                        .expect("Failed to set progress bar template")
-                        .progress_chars("#>-"),
-                );
-
-                info!(
-                    "Iteration {iteration}: applying random delay of {} seconds",
-                    delay
-                );
-
-                for _ in 0..delay {
-                    // Check for CTRL+C signal and break if received
-                    tokio::select! {
-                        _ = time::sleep(Duration::from_secs(1)) => {
-                            pb.inc(1);
-                        }
-                        _ = signal::ctrl_c() => {
-                            warn!("Received CTRL+C. Exiting...");
-                            std::process::exit(0);
-                        }
-                    }
-                }
+            _ = signal::ctrl_c() => {
+                warn!("Received CTRL+C. Exiting...");
+                std::process::exit(0);
             }
-
-            pb.finish_with_message("Ready for next iteration");
         }
     }
+
+    pb.finish_and_clear();
+
+    // Apply random delay if specified
+    if let Some(random_delay) = config.random {
+        let mut rng = rand::rng();
+        let delay = rng.random_range(0..=random_delay);
+
+        let pb = progress_bar!(delay);
+
+        info!(
+            "Iteration {iteration}: applying random delay of {} seconds...",
+            delay
+        );
+
+        for _ in 0..delay {
+            // Check for CTRL+C signal and break if received
+            tokio::select! {
+                _ = time::sleep(Duration::from_secs(1)) => {
+                    pb.inc(1);
+                }
+                _ = signal::ctrl_c() => {
+                    warn!("Received CTRL+C. Exiting...");
+                    std::process::exit(0);
+                }
+            }
+        }
+    }
+
+    pb.finish_with_message("Ready for next iteration");
 }
 
 fn get_exploits(config: &Config) -> Vec<PathBuf> {
@@ -196,7 +202,7 @@ async fn parallel_run(
                     debug!("The exploit did not work on {} (\"{}\")", team.ip, name);
 
                     if loop_setting.is_some() {
-                        warn!("No flags captured, retrying on next loop.");
+                        warn!("No flags captured from {} (\"{}\").", team.ip, name);
                     }
                 }
             })
@@ -229,7 +235,7 @@ fn run_exploit(
     script: &PathBuf,
     flag_regex: &Regex,
 ) -> Vec<String> {
-    debug!(
+    info!(
         "Running exploit {} on team {} (\"{}\")",
         script.display(),
         team.ip,

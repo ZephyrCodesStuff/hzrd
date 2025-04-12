@@ -645,7 +645,6 @@ dependencies = [
  "pretty_env_logger",
  "pyo3",
  "rand",
- "rayon",
  "regex",
  "rusqlite",
  "serde",
