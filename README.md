@@ -108,8 +108,8 @@ The `hzrd.toml` file contains the following sections:
     - `every`: Seconds between attack iterations
     - `random`: Maximum random delay (in seconds) before attacks
 
-- `attacker.teams`: Target information
-  - Each team entry contains an IP address and optional settings
+  - `attacker.teams`: Target information
+    - Each team entry contains an IP address and optional settings
 
 - `submitter`: Configuration for the flag submission process
   - `type`: Submission method (`tcp` or `http`)
@@ -157,7 +157,7 @@ token = "hzrd"
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+GPL-3 License. See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
