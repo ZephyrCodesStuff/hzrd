@@ -1,10 +1,67 @@
-# subnet = "192.168.1.0/24"
-hosts = ["127.0.0.1", "127.0.0.2"]
-exploit_dir = "./exploits"
-hints = true
-flag_regex = "[A-Z0-9]{31}="
+# Example configuration file for hzrd.
+#
+# You can copy this to `hzrd.toml`, or `~/.config/hzrd/hzrd.toml`
+#
+# Alternatively, you can also provide `-c <config_path>` to the CLI
+# to override the config the tool will use.
 
-[submit]
-host = "127.0.0.1"
+# Configuration for the attacker.
+[attacker]
+exploit = "./exploits/working.py"
+flag = "ptm[A-Z0-9]{28}="
+
+# Configuration for the attacker's looping function.
+[attacker.loop]
+
+# Every `every` seconds, the attacker will execute the payload
+# against all of the teams specified below.
+#
+# Captured flags will be stored in a database and submitted
+# as soon as they get captured.
+every = 120
+
+# The attacker will wait a random amount from 0 to `random`,
+# before attacking. This helps against time-based fingerprinting.
+random = 10
+
+# Teams to run exploits on
+[attacker.teams]
+
+# Each team is defined by their name, and an IP.
+#
+# Optionally, you can mark a team as NOP, and the tool will
+# use it to test the payloads, to avoid getting detected by real teams.
+[attacker.teams.team-one]
+ip = "10.66.1.1"
+
+[attacker.teams.team-two]
+ip = "10.66.2.1"
+
+[attacker.teams.nop]
+ip = "10.66.9.1"
+nop = true
+
+# ...
+# Add as many teams as you wish
+# ...
+
+# Configuration for the submitter.
+[submitter]
+
+# Pick between `tcp` and `http`.
+type = "tcp"
+
+# Database configuration.
+[submitter.database]
+
+# File path for the SQLite3 database file.
+file = "flags.sqlite"
+
+[submitter.config.http]
+url = "http://127.0.0.1:31337"
+token = "hzrd"
+
+[submitter.config.tcp]
+host = "130.192.5.212"
 port = 7777
 token = "hzrd"

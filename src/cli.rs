@@ -2,43 +2,40 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::subnet::Subnet;
-
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Path to the configuration file to use (defaults to: `./hzrd.toml`)
+    /// Override the default configuration.
     #[arg(short, long)]
     pub config: Option<PathBuf>,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Run an exploit on a remote
-    Run {
-        /// Python script containing the exploit to run.
-        ///
-        /// If this is a folder, all of the scripts inside will be run.
-        ///
-        /// If not provided, will fallback to the config's exploit directory.
-        script: Option<PathBuf>,
+    Attack(AttackerArgs),
+}
 
-        /// Override the remote subnet to attack.
-        #[arg(short, long)]
-        subnet: Option<Subnet>,
+#[derive(Parser, Debug, Clone)]
+pub struct AttackerArgs {
+    /// Override the exploits to run.
+    pub exploit: Option<PathBuf>,
 
-        /// Override the hosts to attack.
-        #[arg(short, long, value_delimiter = ',')]
-        hosts: Option<Vec<String>>,
+    /// Override the hosts to attack.
+    #[arg(long)]
+    pub hosts: Option<Vec<String>>,
 
-        /// Run the exploits every `x` seconds
-        #[arg(short, long)]
-        r#loop: Option<u64>,
+    /// If given, run the exploits every `x` seconds.
+    ///
+    /// Defaults to the config's value, or `None` if not specified.
+    #[arg(long)]
+    pub r#loop: Option<u64>,
 
-        /// If active, submit the flags to the configured host
-        #[arg(long, default_value_t = false)]
-        submit: bool,
-    },
+    /// If active, submit the flags to the configured host.
+    ///
+    /// Defaults to the config's value, or `true` if not specified.
+    #[arg(long, default_value_t = true)]
+    pub submit: bool,
 }
