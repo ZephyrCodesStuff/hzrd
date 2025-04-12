@@ -1,5 +1,7 @@
 use anyhow::Result;
 use config::{Config as RawConfig, Environment, File};
+use indicatif::{ProgressBar, ProgressStyle};
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -8,6 +10,7 @@ use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 use crate::cli::{Args, Commands};
+use crate::progress_bar;
 
 use super::errors::ConfigError;
 use super::team::Team;
@@ -122,7 +125,42 @@ impl Config {
         match &cli.command {
             Commands::Attack(args) => {
                 if let Some(hosts) = &args.hosts {
-                    builder = builder.set_override("submitter.config.hosts", hosts.to_owned())?;
+                    debug!("Detected `--hosts` override: {:?}", hosts);
+
+                    // TODO: actually override teams and not just merge
+                    //       (fuck the `config` crate's authors)
+                    warn!("WARNING: This does probably not do what you think.");
+                    warn!(
+                        "The `--hosts` flag will actually MERGE your existing teams with new temporary ones."
+                    );
+                    warn!(
+                        "This means that YOUR EXPLOITS WILL RUN on the existing teams' machines."
+                    );
+                    warn!("If you don't want this, please remove them from your config.");
+                    warn!("Waiting 10 seconds before proceeding.");
+
+                    // Wait 10 seconds for the user to read the warning
+                    let pb = progress_bar!(10);
+                    for _ in 0..10 {
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        pb.inc(1);
+                    }
+
+                    // Create teams from the host list with names `override_host_<i>`
+                    let teams: HashMap<String, Team> = hosts
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, host)| match host.to_owned().parse() {
+                            Ok(ip) => Some((format!("extra_team_{}", i), Team { ip, nop: None })),
+                            Err(err) => {
+                                error!("Failed to parse IP address for extra host {host}: {err}");
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Add more teams
+                    builder = builder.set_override("attacker.teams", teams)?;
                 }
             }
         }

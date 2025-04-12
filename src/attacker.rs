@@ -29,6 +29,7 @@ use crate::{
 
 /// Shortcut to create a default-styled progress-bar accepting
 /// a maximum size, with manual incrementing
+#[macro_export]
 macro_rules! progress_bar {
     ($size:expr) => {
         ProgressBar::new($size).with_style(
@@ -60,13 +61,7 @@ pub async fn attack(config: &Config) {
         let flag_regex = Regex::new(&config.attacker.flag).expect("Invalid flag regex");
 
         // Run exploits against all hosts and collect flags
-        let flags = parallel_run(
-            config.clone(),
-            &config.attacker.teams,
-            &scripts_to_run,
-            &flag_regex,
-        )
-        .await;
+        let flags = parallel_run(&config.attacker.teams, &scripts_to_run, &flag_regex).await;
 
         // Process collected flags
         if !flags.is_empty() {
@@ -169,7 +164,6 @@ fn get_dir_files(dir_path: &PathBuf) -> Vec<PathBuf> {
 }
 
 async fn parallel_run(
-    config: Config,
     teams: &HashMap<String, Team>,
     scripts: &Vec<PathBuf>,
     flag_regex: &Regex,
@@ -183,7 +177,6 @@ async fn parallel_run(
             let flag_regex = flag_regex.clone();
             let name = name.clone();
             let team = team.clone();
-            let loop_setting = config.attacker.r#loop.clone();
 
             task::spawn(async move {
                 let mut host_captures: Vec<String> = Vec::new();
