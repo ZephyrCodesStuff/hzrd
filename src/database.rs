@@ -100,7 +100,7 @@ pub fn update_flag_status(
 // Get summary of points earned
 pub fn get_points_summary(conn: &Connection) -> SQLiteResult<f64> {
     let mut stmt = conn.prepare("SELECT SUM(points) FROM flags WHERE status = ?1")?;
-    let points: f64 = stmt.query_row([FlagStatus::Accepted.to_string()], |row| {
+    let points: f64 = stmt.query_row([FlagStatus::Accepted.to_string().to_lowercase()], |row| {
         Ok(row.get(0).unwrap_or(0.0))
     })?;
 
