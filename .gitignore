@@ -1,2 +1,8 @@
 /target
+
+# Created by us
 hzrd.toml
+flags.sqlite
+
+# `cargo-appimage` likes generating this
+icon.png

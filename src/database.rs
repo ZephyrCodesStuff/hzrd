@@ -3,8 +3,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use log::error;
-use rusqlite::{Connection, Result as SQLiteResult, params};
+use rusqlite::{params, Connection, Result as SQLiteResult};
+use tracing::error;
 
 use crate::structs::{config::DatabaseConfig, flag::FlagStatus};
 
@@ -36,7 +36,7 @@ pub fn init_db(db_config: &DatabaseConfig) -> SQLiteResult<Connection> {
 }
 
 // Store new flags in the database
-pub fn store_flags(conn: &Connection, flags: &[String]) -> SQLiteResult<usize> {
+pub fn store_flags(conn: &Connection, flags: &[String]) -> usize {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -54,14 +54,14 @@ pub fn store_flags(conn: &Connection, flags: &[String]) -> SQLiteResult<usize> {
         }
     }
 
-    Ok(count)
+    count
 }
 
 // Get pending flags that need to be submitted
 pub fn get_pending_flags(conn: &Connection) -> SQLiteResult<Vec<String>> {
     let mut stmt = conn.prepare("SELECT flag FROM flags WHERE status = ?1")?;
     let flags = stmt.query_map([FlagStatus::Pending.to_string()], |row| {
-        Ok(row.get::<_, String>(0)?)
+        row.get::<_, String>(0)
     })?;
 
     let mut result = Vec::new();

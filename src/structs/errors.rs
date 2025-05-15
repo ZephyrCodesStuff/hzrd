@@ -8,42 +8,56 @@ pub enum ConfigError {
 
     #[error("Could not determine config directory")]
     ConfigDirNotFound,
+
+    #[error("The specified submitter type is invalid: {0}")]
+    InvalidSubmitterType(String),
 }
 
 /// Errors that may happen while submitting a flag.
 #[derive(Debug, Error)]
 pub enum SubmitError {
     #[error("Could not initialise SQLite database")]
-    SQLiteInitError(rusqlite::Error),
-
-    #[error("Could not store flags in database")]
-    StoreFlagsError(rusqlite::Error),
+    SQLiteInit(rusqlite::Error),
 
     #[error("Could not retrieve flags from database")]
-    RetrieveFlagsError(rusqlite::Error),
+    RetrieveFlags(rusqlite::Error),
 
     #[error("Failed to connect to the service")]
-    ServiceConnectionError(std::io::Error),
+    ServiceConnection(std::io::Error),
 
     #[error("Failed to communicate with the service")]
-    ServiceCommunicationError(std::io::Error),
+    ServiceCommunication(std::io::Error),
 
     /// No greeting detected -- submitter may be broken
     #[error("No greeting detected")]
-    NoGreetingError,
+    NoGreeting,
 
     /// No ready message detected -- submitter may have failed authenticating
     #[error("No ready message detected")]
-    NoReadyMessageError,
+    NoReadyMessage,
 
     /// Database error: failed to update flags
     #[error("Database error: failed to update flags")]
-    DatabaseError(rusqlite::Error),
+    Database(rusqlite::Error),
 }
 
 /// Errors that may happen while attacking
 #[derive(Debug, Error)]
 pub enum AttackError {
     #[error("The specified exploit path does not exist ({0})")]
-    NoSuchExploitError(std::io::Error),
+    NoSuchExploit(std::io::Error),
+}
+
+/// Errors that may happen while displaying the dashboard.
+#[derive(Debug, Error)]
+pub enum DisplayError {
+    // TODO: make more specific
+    #[error("No submitter configuration found")]
+    NoSubmitter,
+
+    #[error("Failed to connect to the service")]
+    Display(std::io::Error),
+
+    #[error("Failed to initialise terminal")]
+    Rusqlite(rusqlite::Error),
 }

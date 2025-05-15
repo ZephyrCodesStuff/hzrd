@@ -7,16 +7,16 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, info, warn};
 use pyo3::{
-    Python,
     types::{PyAnyMethods, PyModule},
+    Python,
 };
 use rand::Rng;
 use regex::Regex;
 use tokio::{signal, task, time};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     structs::{
@@ -44,8 +44,8 @@ macro_rules! progress_bar {
 }
 
 /// Run an exploit and return the captured flags.
+#[allow(clippy::future_not_send)]
 pub async fn attack(config: &Config) {
-    let mut all_flags: Vec<String> = vec![];
     let mut iteration = 1;
 
     loop {
@@ -55,7 +55,7 @@ pub async fn attack(config: &Config) {
         }
 
         // Determine which scripts to run
-        let scripts_to_run = get_exploits(&config);
+        let scripts_to_run = get_exploits(config);
 
         // Set up the flag regex if available
         let flag_regex = Regex::new(&config.attacker.flag).expect("Invalid flag regex");
@@ -67,9 +67,8 @@ pub async fn attack(config: &Config) {
         if !flags.is_empty() {
             info!("Your exploit captured the following flags:");
             for flag in &flags {
-                println!("{}", flag);
+                println!("{flag}");
             }
-            all_flags.extend(flags.clone());
         }
 
         // Handle flag submission if enabled
@@ -86,6 +85,7 @@ pub async fn attack(config: &Config) {
     }
 }
 
+#[allow(clippy::future_not_send)]
 async fn wait(iteration: u64, config: &AttackerLoopConfig) {
     // We don't need to wait on the very first iteration
     if iteration <= 1 {
@@ -104,7 +104,7 @@ async fn wait(iteration: u64, config: &AttackerLoopConfig) {
     for _ in 0..config.every {
         // Check for CTRL+C signal and break if received
         tokio::select! {
-            _ = time::sleep(Duration::from_secs(1)) => {
+            () = time::sleep(Duration::from_secs(1)) => {
                 pb.inc(1);
             }
             _ = signal::ctrl_c() => {
@@ -131,7 +131,7 @@ async fn wait(iteration: u64, config: &AttackerLoopConfig) {
         for _ in 0..delay {
             // Check for CTRL+C signal and break if received
             tokio::select! {
-                _ = time::sleep(Duration::from_secs(1)) => {
+                () = time::sleep(Duration::from_secs(1)) => {
                     pb.inc(1);
                 }
                 _ = signal::ctrl_c() => {
@@ -156,7 +156,7 @@ fn get_exploits(config: &Config) -> Vec<PathBuf> {
 
 fn get_dir_files(dir_path: &PathBuf) -> Vec<PathBuf> {
     fs::read_dir(dir_path)
-        .expect(&format!("Failed to read directory: {}", dir_path.display()))
+        .unwrap_or_else(|_| panic!("Failed to read directory: {}", dir_path.display()))
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.is_file())
@@ -165,7 +165,7 @@ fn get_dir_files(dir_path: &PathBuf) -> Vec<PathBuf> {
 
 async fn parallel_run(
     teams: &HashMap<String, Team>,
-    scripts: &Vec<PathBuf>,
+    scripts: &[PathBuf],
     flag_regex: &Regex,
 ) -> Vec<String> {
     let flags = Arc::new(Mutex::new(Vec::new()));
@@ -173,7 +173,7 @@ async fn parallel_run(
         .iter()
         .map(|(name, team)| {
             let flags = Arc::clone(&flags);
-            let scripts = scripts.clone();
+            let scripts = scripts.to_vec();
             let flag_regex = flag_regex.clone();
             let name = name.clone();
             let team = team.clone();
@@ -181,24 +181,24 @@ async fn parallel_run(
             task::spawn(async move {
                 let mut host_captures: Vec<String> = Vec::new();
 
-                for script_path in scripts.iter() {
+                for script_path in &scripts {
                     match run_exploit(&name, &team, script_path, &flag_regex) {
                         Ok(mut captures) => host_captures.append(&mut captures),
                         Err(e) => {
-                            error!("Failed to run exploit on {} (\"{}\"): {e:#}", team.ip, name)
+                            error!("Failed to run exploit on {} (\"{}\"): {e:#}", team.ip, name);
                         }
                     }
                 }
 
                 // If flags were captured, add them to the shared collection
-                if !host_captures.is_empty() {
+                if host_captures.is_empty() {
+                    warn!("The exploit did not work on {} (\"{}\")", team.ip, name);
+                } else {
                     info!("Flag captured on {} (\"{}\")!", team.ip, name);
 
                     // Add the captured flags to the shared collection
                     let mut flags = flags.lock().unwrap();
                     flags.extend(host_captures);
-                } else {
-                    warn!("The exploit did not work on {} (\"{}\")", team.ip, name);
                 }
             })
         })
@@ -238,7 +238,7 @@ fn run_exploit(
     );
 
     let script_content =
-        fs::read_to_string(&script).map_err(|e| anyhow!(AttackError::NoSuchExploitError(e)))?;
+        fs::read_to_string(script).map_err(|e| anyhow!(AttackError::NoSuchExploit(e)))?;
 
     let script_content = CString::new(script_content).unwrap();
     let script_name = CString::new(
@@ -269,7 +269,7 @@ fn run_exploit(
                 return vec![]; // Return empty vector if the script failed to load
             }
         };
-        let args = (team.ip.clone(),); // Pass team IP as argument
+        let args = (team.ip,); // Pass team IP as argument
 
         match module
             .getattr("exploit")
@@ -309,42 +309,22 @@ async fn submit_flags(config: &SubmitterConfig, flags: Vec<String>) {
         return;
     }
 
-    match config.r#type.as_str() {
-        "tcp" => {
-            if let Some(tcp_config) = &config.config.tcp {
-                info!(
-                    "Submitting {} flags to {}:{}",
-                    flags.len(),
-                    tcp_config.host,
-                    tcp_config.port
-                );
+    info!(
+        "Submitting {} flags using {} submitter",
+        flags.len(),
+        config.r#type
+    );
 
-                match submitter::submit_flags_tcp(tcp_config, &config.database, flags) {
-                    Ok(points) => {
-                        if points > 0.0 {
-                            info!("Flags submitted successfully and gained {points} points!");
-                        } else {
-                            warn!("Flags submitted successfully, but no points were gained.");
-                        }
-                    }
-                    Err(e) => error!("Failed to submit flags: {}", e),
-                }
+    match submitter::submit_flags(config, flags).await {
+        Ok((submitted, points)) => {
+            if !submitted {
+                info!("No new flags captured");
+            } else if points > 0.0 {
+                info!("Flags submitted successfully and gained {points} points!");
             } else {
-                error!("TCP configuration is missing but type is set to 'tcp'");
+                warn!("Flags submitted successfully, but no points were gained.");
             }
         }
-        "http" => {
-            if let Some(http_config) = &config.config.http {
-                info!("Submitting {} flags to {}", flags.len(), http_config.url);
-
-                // Replace this with your HTTP submission implementation
-                error!("HTTP submission not yet implemented!");
-            } else {
-                error!("HTTP configuration is missing but type is set to 'http'");
-            }
-        }
-        unknown_type => {
-            error!("Unknown submitter type: {}", unknown_type);
-        }
+        Err(e) => error!("Failed to submit flags: {}", e),
     }
 }

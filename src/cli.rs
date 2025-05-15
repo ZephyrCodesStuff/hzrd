@@ -16,6 +16,9 @@ pub struct Args {
 pub enum Commands {
     /// Run an exploit on a remote
     Attack(AttackerArgs),
+
+    /// Display all of the flags in the database
+    Display,
 }
 
 #[derive(Parser, Debug, Clone)]

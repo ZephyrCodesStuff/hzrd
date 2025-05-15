@@ -1,13 +1,15 @@
 use anyhow::Result;
 use config::{Config as RawConfig, Environment, File};
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error, warn};
 use url::Url;
 
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::cli::{Args, Commands};
 use crate::progress_bar;
@@ -52,9 +54,40 @@ pub struct AttackerLoopConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubmitterType {
+    /// TCP submitter
+    Tcp,
+
+    /// HTTP submitter
+    Http,
+}
+
+impl Display for SubmitterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tcp => write!(f, "tcp"),
+            Self::Http => write!(f, "http"),
+        }
+    }
+}
+
+impl FromStr for SubmitterType {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "tcp" => Ok(Self::Tcp),
+            "http" => Ok(Self::Http),
+            _ => Err(ConfigError::InvalidSubmitterType(s.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SubmitterConfig {
     /// Chosen configuration type
-    pub r#type: String,
+    pub r#type: SubmitterType,
 
     /// Database configuration
     pub database: DatabaseConfig,
@@ -99,6 +132,29 @@ pub struct SubmitterHTTPConfig {
 
     /// Unique token to authenticate your team during the competition.
     pub token: String,
+
+    /// Accept insecure TLS connections (e.g. self-signed certs).
+    ///
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub insecure: bool,
+
+    /// Timeout for the HTTP request in seconds.
+    ///
+    /// Defaults to `60`.
+    #[serde(default)]
+    pub timeout: Timeout,
+}
+
+/// Timeout in seconds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct Timeout(pub usize);
+
+impl Default for Timeout {
+    fn default() -> Self {
+        Self(60)
+    }
 }
 
 impl Config {
@@ -151,7 +207,7 @@ impl Config {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, host)| match host.to_owned().parse() {
-                            Ok(ip) => Some((format!("extra_team_{}", i), Team { ip, nop: None })),
+                            Ok(ip) => Some((format!("extra_team_{i}"), Team { ip, nop: None })),
                             Err(err) => {
                                 error!("Failed to parse IP address for extra host {host}: {err}");
                                 None
@@ -163,6 +219,7 @@ impl Config {
                     builder = builder.set_override("attacker.teams", teams)?;
                 }
             }
+            Commands::Display => {}
         }
 
         let built = builder.build()?;
@@ -188,7 +245,7 @@ impl Default for Config {
                 }),
             },
             submitter: Some(SubmitterConfig {
-                r#type: "tcp".to_string(),
+                r#type: SubmitterType::Tcp,
                 database: DatabaseConfig {
                     file: "flags.sqlite".to_string(),
                 },

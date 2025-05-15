@@ -58,8 +58,12 @@ type = "tcp"
 file = "flags.sqlite"
 
 [submitter.config.http]
-url = "http://127.0.0.1:31337"
+url = "http://127.0.0.1:31337/flags"
 token = "hzrd"
+
+# Whether to allow invalid SSL certificates (e.g. self-signed).
+insecure = false
+timeout = 60
 
 [submitter.config.tcp]
 host = "130.192.5.212"
