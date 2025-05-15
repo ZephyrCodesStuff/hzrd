@@ -167,7 +167,7 @@ impl Config {
         }
         // 2. Local ./hzrd.toml
         else if Path::new("hzrd.toml").exists() {
-            builder = builder.add_source(File::with_name("hzrd"));
+            builder = builder.add_source(File::with_name("hzrd.toml"));
         }
         // 3. XDG fallback
         else if let Some(path) = Self::try_get_path().ok().filter(|p| p.exists()) {
