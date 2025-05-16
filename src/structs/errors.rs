@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 /// Errors that may happen while fetching the configuration.
@@ -28,6 +30,9 @@ pub enum SubmitError {
     #[error("Failed to communicate with the service")]
     ServiceCommunication(std::io::Error),
 
+    #[error("No submitter configuration found")]
+    NoSubmitter,
+
     /// No greeting detected -- submitter may be broken
     #[error("No greeting detected")]
     NoGreeting,
@@ -42,10 +47,19 @@ pub enum SubmitError {
 }
 
 /// Errors that may happen while attacking
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum AttackError {
     #[error("The specified exploit path does not exist ({0})")]
-    NoSuchExploit(std::io::Error),
+    NoSuchExploit(PathBuf),
+
+    #[error("The specified team does not exist ({0})")]
+    NoSuchTeam(String),
+
+    #[error("We didn't manage to capture any flags")]
+    NoCaptures,
+
+    #[error("Script execution error in {script}: {message}")]
+    ScriptExecutionError { script: String, message: String },
 }
 
 /// Errors that may happen while displaying the dashboard.

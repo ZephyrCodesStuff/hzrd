@@ -1,24 +1,23 @@
-use std::{io::stdout, time::Duration};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, LeaveAlternateScreen},
 };
 use ratatui::{
-    backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::Line,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Wrap},
-    Terminal,
 };
 use rusqlite::{Connection, Result as SQLiteResult};
 
 use crate::{
     database::{get_points_summary, init_db},
     structs::{config::Config, errors::DisplayError},
+    utils::ui,
 };
 
 // Definition of a Flag struct for easier handling in the TUI
@@ -86,16 +85,11 @@ pub fn print_flags(config: &Config) -> Result<(), DisplayError> {
     let submitter = config.submitter.as_ref().ok_or(DisplayError::NoSubmitter)?;
     let conn = init_db(&submitter.database).map_err(DisplayError::Rusqlite)?;
 
-    // Set up terminal
-    enable_raw_mode().map_err(DisplayError::Display)?;
-
-    let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(DisplayError::Display)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).map_err(DisplayError::Display)?;
+    let mut terminal = ui::setup_terminal()?;
 
     // Get all flags from the database
     let mut flags = get_all_flags(&conn).map_err(DisplayError::Rusqlite)?;
+    flags.reverse(); // Newest flags at the top
 
     // Get total points
     let mut total_points = get_points_summary(&conn).map_err(DisplayError::Rusqlite)?;
@@ -111,9 +105,8 @@ pub fn print_flags(config: &Config) -> Result<(), DisplayError> {
 
     // Main loop
     while running {
-        terminal
-            .draw(|f| {
-                let size = f.area();
+        terminal.draw(|f| {
+            let size = f.area();
 
                 // Create layout
                 let chunks = Layout::default()
@@ -203,9 +196,9 @@ pub fn print_flags(config: &Config) -> Result<(), DisplayError> {
 
                 // Footer with stats and instructions
                 let footer_message = if reload_message.is_empty() {
-                    format!("Total Points: {total_points} | Use ↑/↓ to scroll, R to reload data, Q to quit")
+                    format!("Total Points: {total_points:.2} | Use ↑/↓ to scroll, R to reload data, Q to quit")
                 } else {
-                    format!("{reload_message} | Total Points: {total_points}")
+                    format!("{reload_message} | Total Points: {total_points:.2}")
                 };
 
                 let footer = Paragraph::new(vec![Line::styled(
@@ -230,6 +223,8 @@ pub fn print_flags(config: &Config) -> Result<(), DisplayError> {
                     KeyCode::Char('r') => {
                         // Reload flags data from the database
                         flags = get_all_flags(&conn).map_err(DisplayError::Rusqlite)?;
+                        flags.reverse();
+
                         total_points = get_points_summary(&conn).map_err(DisplayError::Rusqlite)?;
 
                         // Update selection to avoid out-of-bounds issues
@@ -244,7 +239,7 @@ pub fn print_flags(config: &Config) -> Result<(), DisplayError> {
                         // Set reload message and timer
                         reload_message = format!(
                             "Data reloaded at {}! {} flags found",
-                            Utc::now(),
+                            Utc::now().format("%H:%M:%S"),
                             flags.len()
                         );
                         reload_message_timer = 20; // Display for ~2 seconds

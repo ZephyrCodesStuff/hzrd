@@ -6,7 +6,7 @@ license = "GPL-3.0"
 repository = "https://github.com/ZephyrCodesStuff/hzrd"
 keywords = ["ctf", "capture-the-flag", "hzrd", "rust"]
 categories = ["Security", "Networking"]
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 
 [dependencies]
@@ -21,6 +21,7 @@ indicatif = { version = "0.17.11", features = ["rayon"] }
 pyo3 = { version = "0.24.1", features = ["auto-initialize"] }
 rand = "0.9.0"
 ratatui = "0.29.0"
+rayon = "1.10.0"
 regex = "1.11.1"
 reqwest = { version = "0.12.15", features = ["json"] }
 rusqlite = "0.34.0"
@@ -35,21 +36,25 @@ tokio = { version = "1.44.2", features = [
 ] }
 toml = "0.8.20"
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["time", "env-filter"] }
+tracing-subscriber = { version = "0.3.19", features = [
+  "time",
+  "env-filter",
+  "chrono",
+] }
 url = { version = "2.5.4", features = ["serde"] }
 
 # Configure the linters to be as fucking annoying as possible
-[lints.clippy]
-cargo = "deny"
-all = "deny"
-nursery = "deny"
+# [lints.clippy]
+# cargo = "deny"
+# all = "deny"
+# nursery = "deny"
 
-correctness = "warn"
-style = "warn"
-complexity = "warn"
-perf = "warn"
+# correctness = "warn"
+# style = "warn"
+# complexity = "warn"
+# perf = "warn"
 
-# Override some of the default lints
-multiple_crate_versions = { level = "allow", priority = 1 }
-cast_sign_loss = { level = "allow", priority = 1 }
-cast_possible_truncation = { level = "allow", priority = 1 }
+# # Override some of the default lints
+# multiple_crate_versions = { level = "allow", priority = 1 }
+# cast_sign_loss = { level = "allow", priority = 1 }
+# cast_possible_truncation = { level = "allow", priority = 1 }

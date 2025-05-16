@@ -13,7 +13,7 @@ mod database;
 mod display;
 mod structs;
 mod submitter;
-mod logger;
+mod utils;
 
 /// Sets `RUST_LOG` environment variable to `info` if it's not already set,
 /// and initializes `pretty_env_logger`.
@@ -27,7 +27,7 @@ fn init() {
     }
 
     // Initialize logging
-    logger::init_logging();
+    // logger::init_logging();
 }
 
 #[tokio::main]
@@ -42,9 +42,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match &args.command {
         // TODO: add error handling to `attacker`
         Commands::Attack(_) => {
-            attacker::attack(&config).await;
+            attacker::tui::ui(args, &config).await;
             Ok(())
-        },
+        }
         Commands::Display => display::print_flags(&config).map_err(|e| e.to_string().into()),
     }
 }

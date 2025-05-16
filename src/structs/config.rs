@@ -40,6 +40,45 @@ pub struct AttackerConfig {
     ///
     /// Defaults to `None` (the attacker will only run them once.)
     pub r#loop: Option<AttackerLoopConfig>,
+
+    /// Available exploits (populated at runtime)
+    #[serde(skip)]
+    pub exploits: Vec<ExploitInfo>,
+}
+
+/// Information about an individual exploit script
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExploitInfo {
+    /// Path to the exploit script
+    pub path: PathBuf,
+
+    /// Filename of the exploit (for display purposes)
+    pub name: String,
+
+    /// Whether this exploit is enabled
+    pub enabled: bool,
+}
+
+impl ExploitInfo {
+    /// Create a new ExploitInfo from a path
+    pub fn new(path: PathBuf) -> Self {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        Self {
+            path,
+            name,
+            enabled: true, // Enabled by default
+        }
+    }
+
+    /// Toggle the enabled status
+    pub fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -243,6 +282,7 @@ impl Default for Config {
                     every: 120,
                     random: Some(10),
                 }),
+                exploits: Vec::new(),
             },
             submitter: Some(SubmitterConfig {
                 r#type: SubmitterType::Tcp,
