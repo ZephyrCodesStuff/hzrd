@@ -13,6 +13,9 @@ pub enum ConfigError {
 
     #[error("The specified submitter type is invalid: {0}")]
     InvalidSubmitterType(String),
+
+    #[error("The specified submitter mode is invalid: {0}")]
+    InvalidSubmitMode(String),
 }
 
 /// Errors that may happen while submitting a flag.

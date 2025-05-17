@@ -13,7 +13,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::structs::config::AttackerLoopConfig;
+use crate::structs::config::{AttackerLoopConfig, Config};
 
 use super::tabs::TabState;
 use super::{logging::LogManager, state::TeamStatus, status::StatusBar};
@@ -105,10 +105,10 @@ fn get_status_style(team: &TeamStatus) -> Style {
 fn get_help_text() -> Vec<Line<'static>> {
     vec![
         Line::from("Available Commands:"),
-        Line::from("↑/↓: Navigate teams/logs/exploits"),
+        Line::from("↑/↓: Navigate teams/logs/exploits/settings"),
         Line::from("Enter/Space: Attack selected team or toggle exploit"),
         Line::from("a: Attack all teams in parallel"),
-        Line::from("1/2/3: Switch tabs (Teams/Logs/Exploits)"),
+        Line::from("1/2/3/4: Switch tabs (Teams/Logs/Exploits/Settings)"),
         Line::from("PageUp/PageDown: Scroll logs"),
         Line::from("r: Reload configuration and scan exploits"),
         Line::from("q: Quit"),
@@ -131,6 +131,7 @@ fn render_help(f: &mut Frame, area: Rect) {
 /// Render the UI with individual state components to avoid recursive borrow issues
 pub fn render_ui_with_state(
     f: &mut Frame,
+    config: &Config,
     teams: &Arc<Mutex<Vec<TeamStatus>>>,
     team_state: &mut TableState,
     exploit_state: &mut TableState,
@@ -139,7 +140,6 @@ pub fn render_ui_with_state(
     status_bar: &StatusBar,
     auto_attack_enabled: bool,
     auto_attack_last_at: Option<Instant>,
-    attacker_loop_config: &Option<AttackerLoopConfig>,
 ) {
     // Layout
     let size = f.area();
@@ -151,19 +151,19 @@ pub fn render_ui_with_state(
         chunks[0],
         auto_attack_enabled,
         auto_attack_last_at,
-        attacker_loop_config,
+        &config.attacker.r#loop,
     );
 
     // Render content based on active tab
     match active_tab {
         TabState::Teams => render_teams_tab_with_state(f, teams, team_state, chunks[1]),
         TabState::Logs => render_logs_tab_with_state(f, logs, chunks[1]),
-        TabState::Exploits => render_exploits_tab_with_state(
-            f,
-            &status_bar.attacker_config.exploits,
-            exploit_state,
-            chunks[1],
-        ),
+        TabState::Exploits => {
+            render_exploits_tab_with_state(f, &config.attacker.exploits, exploit_state, chunks[1])
+        }
+        TabState::Settings => {
+            render_settings_tab_with_state(f, config, auto_attack_enabled, status_bar, chunks[1])
+        }
     };
 
     // Render other UI components
@@ -360,4 +360,143 @@ fn render_exploits_tab_with_state(
     .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     f.render_stateful_widget(table, area, exploit_state);
+}
+
+/// Render the settings tab with the current configuration
+fn render_settings_tab_with_state(
+    f: &mut Frame,
+    config: &Config,
+    auto_attack_enabled: bool,
+    status_bar: &StatusBar,
+    area: Rect,
+) {
+    // Create layout for settings sections
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage(40), // Attacker settings
+                Constraint::Percentage(40), // Submitter settings
+                Constraint::Percentage(20), // General settings
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    // --- Attacker Settings Section ---
+    let attacker_settings = vec![
+        format!(
+            "Auto Attack: {}",
+            if auto_attack_enabled { "On" } else { "Off" }
+        ),
+        format!(
+            "Attack Interval: {} seconds",
+            if let Some(config) = &config.attacker.r#loop {
+                format!(
+                    "Every {}s, Random delay up to {}s",
+                    config.every,
+                    config.random.unwrap_or(0)
+                )
+            } else {
+                "N/A".to_string()
+            }
+        ),
+        format!("Flag Regex: {}", config.attacker.flag),
+        format!("Exploits Directory: {}", config.attacker.exploit.display()),
+        format!(
+            "Enabled Exploits: {}/{}",
+            config
+                .attacker
+                .exploits
+                .iter()
+                .filter(|e| e.enabled)
+                .count(),
+            config.attacker.exploits.len()
+        ),
+    ];
+
+    let attacker_paragraph = Paragraph::new(attacker_settings.join("\n"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Attacker Settings"),
+        )
+        .style(Style::default().fg(Color::Cyan))
+        .wrap(Wrap { trim: true });
+
+    // --- Submitter Settings Section ---
+    let mut submitter_settings = Vec::new();
+
+    if let Some(submitter) = config.submitter.as_ref() {
+        submitter_settings.extend([
+            format!("Type: {:?}", submitter.r#type),
+            format!("Mode: {:?}", submitter.mode),
+            format!("Database: {}", submitter.database.file),
+        ]);
+
+        // Add type-specific configuration
+        match submitter.r#type {
+            crate::structs::config::SubmitterType::Tcp => {
+                if let Some(tcp_cfg) = &submitter.config.tcp {
+                    submitter_settings.extend([
+                        format!("TCP Host: {}", tcp_cfg.host),
+                        format!("TCP Port: {}", tcp_cfg.port),
+                        format!(
+                            "TCP Token: {}",
+                            if tcp_cfg.token == "changeme" {
+                                "⚠️ Default token! Change it!".to_string()
+                            } else {
+                                "****".to_string()
+                            }
+                        ),
+                    ]);
+                }
+            }
+            crate::structs::config::SubmitterType::Http => {
+                if let Some(http_cfg) = &submitter.config.http {
+                    submitter_settings.extend([
+                        format!("HTTP URL: {}", http_cfg.url),
+                        format!("Insecure TLS: {}", http_cfg.insecure),
+                        format!("Timeout: {}s", http_cfg.timeout.0),
+                    ]);
+                }
+            }
+        }
+    } else {
+        submitter_settings.push("Submitter not configured".to_string());
+    }
+
+    let submitter_paragraph = Paragraph::new(submitter_settings.join("\n"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Submitter Settings"),
+        )
+        .style(Style::default().fg(Color::Blue))
+        .wrap(Wrap { trim: true });
+
+    // --- General Settings Section ---
+    let general_settings = vec![
+        "Press 'r' to reload configuration".to_string(),
+        "Press 'a' to attack all teams".to_string(),
+        format!("Teams configured: {}", config.attacker.teams.len()),
+        format!(
+            "Runtime: {:.1}s",
+            status_bar.start_time.elapsed().as_secs_f32()
+        ),
+    ];
+
+    let general_paragraph = Paragraph::new(general_settings.join("\n"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("General Information"),
+        )
+        .style(Style::default().fg(Color::White))
+        .wrap(Wrap { trim: true });
+
+    // Render all sections
+    f.render_widget(attacker_paragraph, sections[0]);
+    f.render_widget(submitter_paragraph, sections[1]);
+    f.render_widget(general_paragraph, sections[2]);
 }

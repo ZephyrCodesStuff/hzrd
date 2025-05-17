@@ -10,7 +10,7 @@ use tokio::runtime::Runtime;
 use crate::{
     cli::Args,
     structs::{
-        config::{AttackerConfig, Config, SubmitterConfig},
+        config::{Config, SubmitterConfig},
         errors::AttackError,
         team::Team,
     },
@@ -64,7 +64,7 @@ impl TeamStatus {
 pub struct AttackerUI {
     // Configuration
     pub args: Args,
-    pub config: AttackerConfig,
+    pub config: Config,
     pub submitter_config: Option<SubmitterConfig>,
 
     // Terminal and rendering
@@ -112,7 +112,7 @@ impl AttackerUI {
         // Create the UI state
         let state = Self {
             args,
-            config: config.attacker.clone(),
+            config: config.clone(),
             submitter_config: config.submitter.clone(),
             terminal,
             running: true,
@@ -124,7 +124,7 @@ impl AttackerUI {
             runtime: Runtime::new().unwrap(),
             active_tab: TabState::Teams,
             logs: LogManager::new(log_receiver),
-            status_bar: StatusBar::new(config.attacker.clone()),
+            status_bar: StatusBar::new(),
         };
 
         (state, log_sender)
@@ -137,7 +137,7 @@ impl AttackerUI {
 
         // Check if auto-attack is enabled and if it's time to attack again
         if self.auto_attack_enabled {
-            let should_attack = match (self.last_auto_attack, &self.config.r#loop) {
+            let should_attack = match (self.last_auto_attack, &self.config.attacker.r#loop) {
                 (Some(last_time), Some(loop_config)) => {
                     // Calculate the base wait time in seconds
                     let wait_time = loop_config.every;
@@ -175,9 +175,6 @@ impl AttackerUI {
         let teams_ref = Arc::clone(&self.teams);
         self.status_bar.update_from_teams(&teams_ref);
 
-        // Make sure status bar has latest config
-        self.status_bar.attacker_config = self.config.clone();
-
         // Clone necessary state fields for rendering to avoid recursive borrow
         let teams_for_render = Arc::clone(&self.teams);
         let active_tab = self.active_tab;
@@ -201,6 +198,7 @@ impl AttackerUI {
         if let Err(e) = self.terminal.draw(|f| {
             super::rendering::render_ui_with_state(
                 f,
+                &self.config,
                 &teams_for_render,
                 &mut team_table_state,
                 &mut exploit_table_state,
@@ -209,7 +207,6 @@ impl AttackerUI {
                 status_bar,
                 self.auto_attack_enabled,
                 self.last_auto_attack,
-                &self.config.r#loop,
             )
         }) {
             tracing::error!("Failed to render UI: {}", e);
@@ -249,13 +246,13 @@ pub async fn run_ui(args: Args, config: &Config) {
     let (mut state, log_sender) = AttackerUI::new(args, config, terminal);
 
     // Scan for exploits
-    let mut attacker_config = state.config.clone();
+    let mut attacker_config = state.config.attacker.clone();
     crate::attacker::runner::scan_exploits(&mut attacker_config);
-    state.config = attacker_config;
+    state.config.attacker = attacker_config;
 
     // Initial table selection
     state.table_state.select(Some(0));
-    if !state.config.exploits.is_empty() {
+    if !state.config.attacker.exploits.is_empty() {
         state.exploit_state.select(Some(0));
     }
 

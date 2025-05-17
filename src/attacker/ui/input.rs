@@ -1,8 +1,7 @@
 use super::state::AttackerUI;
 use super::tabs::TabState;
-use crate::attacker::runner;
-use crate::attacker::ui::state::AttackState;
 use crate::structs::config::Config;
+use crate::{attacker::runner, structs::config::SubmitMode};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::sync::Arc;
@@ -57,6 +56,9 @@ pub fn handle_input(state: &mut AttackerUI) -> bool {
                 (KeyCode::Char('3'), _) => {
                     state.active_tab = TabState::Exploits;
                 }
+                (KeyCode::Char('4'), _) => {
+                    state.active_tab = TabState::Settings;
+                }
                 (KeyCode::Tab, KeyModifiers::CONTROL) => {
                     // Switch to the next tab
                     let new_index = (state.active_tab.index() + 1) % 3; // Now with 3 tabs
@@ -71,9 +73,6 @@ pub fn handle_input(state: &mut AttackerUI) -> bool {
             }
         }
     }
-
-    // Make sure status bar has the latest config with exploit status
-    state.status_bar.attacker_config = state.config.clone();
 
     continue_running
 }
@@ -106,7 +105,7 @@ fn handle_down_key(state: &mut AttackerUI) {
             state.logs.scroll_down(1);
         }
         TabState::Exploits => {
-            let exploits_len = state.config.exploits.len();
+            let exploits_len = state.config.attacker.exploits.len();
             if exploits_len > 0 {
                 let next = match state.exploit_state.selected() {
                     Some(i) => {
@@ -120,6 +119,9 @@ fn handle_down_key(state: &mut AttackerUI) {
                 };
                 state.exploit_state.select(Some(next));
             }
+        }
+        TabState::Settings => {
+            // No action for Down key in Settings tab
         }
     }
 }
@@ -147,7 +149,7 @@ fn handle_up_key(state: &mut AttackerUI) {
             state.logs.scroll_up(1);
         }
         TabState::Exploits => {
-            let exploits_len = state.config.exploits.len();
+            let exploits_len = state.config.attacker.exploits.len();
             if exploits_len > 0 {
                 let next = match state.exploit_state.selected() {
                     Some(i) => {
@@ -162,42 +164,58 @@ fn handle_up_key(state: &mut AttackerUI) {
                 state.exploit_state.select(Some(next));
             }
         }
+        TabState::Settings => {
+            // No action for Up key in Settings tab
+        }
     }
 }
 
 // Toggle the enabled state of the currently selected exploit
 fn toggle_selected_exploit(state: &mut AttackerUI) {
     if let Some(idx) = state.exploit_state.selected() {
-        if idx < state.config.exploits.len() {
+        if idx < state.config.attacker.exploits.len() {
             // Toggle the exploit's enabled status
-            state.config.exploits[idx].toggle();
+            state.config.attacker.exploits[idx].toggle();
 
             // Update UI to show the change
-            let exploit_name = &state.config.exploits[idx].name;
-            let status = if state.config.exploits[idx].enabled {
+            let exploit_name = &state.config.attacker.exploits[idx].name;
+            let status = if state.config.attacker.exploits[idx].enabled {
                 "enabled"
             } else {
                 "disabled"
             };
             tracing::info!("Exploit '{}' is now {}", exploit_name, status);
-
-            // Update status bar config
-            state.status_bar.attacker_config = state.config.clone();
         }
     }
 }
 
 /// Handle PageDown key for scrolling logs
 fn handle_page_down(state: &mut AttackerUI) {
-    if state.active_tab == TabState::Logs {
-        state.logs.scroll_down(10); // Scroll by a page (10 lines)
+    match state.active_tab {
+        TabState::Teams => {
+            for _ in 0..10 {
+                handle_down_key(state);
+            }
+        }
+        TabState::Logs => {
+            state.logs.scroll_down(10); // Scroll by a page (10 lines)
+        }
+        _ => {}
     }
 }
 
 /// Handle PageUp key for scrolling logs
 fn handle_page_up(state: &mut AttackerUI) {
-    if state.active_tab == TabState::Logs {
-        state.logs.scroll_up(10); // Scroll by a page (10 lines)
+    match state.active_tab {
+        TabState::Teams => {
+            for _ in 0..10 {
+                handle_up_key(state);
+            }
+        }
+        TabState::Logs => {
+            state.logs.scroll_up(10); // Scroll by a page (10 lines)
+        }
+        _ => {}
     }
 }
 
@@ -216,27 +234,24 @@ pub fn reload_config(state: &mut AttackerUI) {
                 .map(|(name, team)| super::state::TeamStatus::from_team(name, team))
                 .collect::<Vec<_>>();
 
-            teams.sort_by(|a, b| a.name.cmp(&b.name));
+            teams.sort_by(|a, b| a.ip.cmp(&b.ip));
 
             if let Ok(mut state_teams) = state.teams.lock() {
                 *state_teams = teams;
             }
 
             // Keep the old exploits list to preserve enabled status
-            let old_exploits = state.config.exploits.clone();
+            let old_exploits = state.config.attacker.exploits.clone();
 
             // Update the config
-            state.config = config.attacker.clone();
+            state.config = config.clone();
             state.submitter_config = config.submitter.clone();
 
             // Preserve the old exploits list
-            state.config.exploits = old_exploits;
+            state.config.attacker.exploits = old_exploits;
 
             // Scan for any new exploits
-            crate::attacker::runner::scan_exploits(&mut state.config);
-
-            // Update status bar
-            state.status_bar.attacker_config = state.config.clone();
+            crate::attacker::runner::scan_exploits(&mut state.config.attacker);
 
             tracing::info!("Configuration reloaded successfully");
         }
@@ -286,7 +301,7 @@ pub fn attack_team(state: &mut AttackerUI, team_idx: usize) {
             team_name,
             team_ip
         );
-        let results = runner::attack_team_parallel(&team_to_attack, &config);
+        let results = runner::attack_team_parallel(&team_to_attack, &config.attacker);
 
         // Count successes and errors
         let success_count = results.iter().filter(|r| r.is_ok()).count();
@@ -342,28 +357,30 @@ pub fn attack_team(state: &mut AttackerUI, team_idx: usize) {
         }
 
         // Submit flags if we have them and a submitter is configured
-        if !flags.is_empty() {
-            if let Some(submitter_config) = submitter_config {
-                tracing::debug!("Submitting {} flags from team {}", flags.len(), team_name);
-                let points = runner::submit_flags(&submitter_config, flags).await;
+        if let Some(submitter_config) = submitter_config {
+            // Grouped: submit for each team, after all exploits
+            if submitter_config.mode != SubmitMode::Grouped {
+                return;
+            }
 
-                if let Ok(mut teams) = teams_arc.lock() {
-                    if let Some(team) = teams.get_mut(idx) {
-                        team.status = AttackState::Success(points);
-                    }
+            if flags.is_empty() {
+                tracing::warn!("No flags to submit for team {}", team_name);
+                return;
+            }
+
+            tracing::debug!("Submitting {} flags from team {}", flags.len(), team_name);
+            let points = runner::submit_flags(&submitter_config, flags).await;
+
+            if let Ok(mut teams) = teams_arc.lock() {
+                if let Some(team) = teams.get_mut(idx) {
+                    team.status = AttackState::Success(points);
                 }
-            } else {
-                tracing::warn!(
-                    "No submitter configured, can't submit {} flags from team {}",
-                    flags.len(),
-                    team_name
-                );
             }
         }
     });
 }
 
-/// Attack all teams in parallel and submit flags in a single batch at the end
+/// Attack all teams in parallel with flag submission based on the configured mode
 pub fn attack_all_teams(state: &mut AttackerUI) {
     let teams_to_attack = {
         let mut teams = state.teams.lock().unwrap();
@@ -387,8 +404,13 @@ pub fn attack_all_teams(state: &mut AttackerUI) {
     let submitter_config = state.submitter_config.clone();
     let teams_arc = Arc::clone(&state.teams);
 
-    // Spawn a task to handle the attack and batch flag submission
+    // Spawn a task to handle the attack and flag submission
     state.runtime.spawn(async move {
+        use super::state::AttackState;
+
+        // For batch mode only: collect all flags from all teams
+        let mut all_flags = Vec::new();
+
         // Process teams in parallel with rayon
         let results: Vec<_> = teams_to_attack
             .par_iter()
@@ -403,17 +425,13 @@ pub fn attack_all_teams(state: &mut AttackerUI) {
                 let team_name = team.name.clone();
                 let team_ip = team.ip.clone();
 
-                // Block on the attack function - not ideal but necessary for rayon
-                let results = runner::attack_team_parallel(&team_to_attack, &config);
+                let results = runner::attack_team_parallel(&team_to_attack, &config.attacker);
 
                 (idx, team_name, team_ip, results)
             })
             .collect();
 
-        // Collect all flags from all teams before submission
-        let mut all_flags = Vec::new();
-
-        // Process the results and update team statuses
+        // Process the results and handle flag submission per team if in Grouped mode
         for (idx, team_name, _, results) in results {
             // Count successes and errors
             let success_count = results.iter().filter(|r| r.is_ok()).count();
@@ -442,39 +460,97 @@ pub fn attack_all_teams(state: &mut AttackerUI) {
 
             if !flags.is_empty() {
                 tracing::info!("Captured {} flags from team {}", flags.len(), team_name);
-                // Add these flags to our consolidated list
-                all_flags.extend(flags.clone());
+
+                // In 'Grouped' mode, immediately submit flags for this team
+                if let Some(ref submitter_config) = submitter_config {
+                    match submitter_config.mode {
+                        crate::structs::config::SubmitMode::Grouped => {
+                            tracing::info!(
+                                "Submitting {} flags from team {} (Grouped mode)",
+                                flags.len(),
+                                team_name
+                            );
+
+                            // Submit flags and update team status
+                            let points =
+                                runner::submit_flags(submitter_config, flags.clone()).await;
+
+                            // Update the team status
+                            if let Ok(mut teams) = teams_arc.lock() {
+                                if let Some(team) = teams.get_mut(idx) {
+                                    team.status = AttackState::Success(points);
+                                }
+                            }
+
+                            tracing::info!(
+                                "Team {} flags submitted, earned {} points",
+                                team_name,
+                                points
+                            );
+                        }
+                        crate::structs::config::SubmitMode::Batch => {
+                            // In Batch mode, collect flags for later submission
+                            all_flags.extend(flags.clone());
+
+                            // Update team status to indicate pending submission
+                            if let Ok(mut teams) = teams_arc.lock() {
+                                if let Some(team) = teams.get_mut(idx) {
+                                    team.status = AttackState::Submitting(flags);
+                                }
+                            }
+                        }
+                        crate::structs::config::SubmitMode::Instant => {
+                            // Instant mode should not be handled here
+                            // (it should be handled directly in attack_team_parallel)
+                            // This is here for completeness
+                            tracing::warn!(
+                                "Instant mode found in attack_all_teams - this shouldn't happen"
+                            );
+                            all_flags.extend(flags.clone());
+                        }
+                    }
+                } else {
+                    // No submitter config, just update status
+                    if let Ok(mut teams) = teams_arc.lock() {
+                        if let Some(team) = teams.get_mut(idx) {
+                            team.status = AttackState::Idle;
+                        }
+                    }
+                }
             } else if success_count > 0 {
                 tracing::warn!(
                     "No flags captured from team {} despite {} successful scripts",
                     team_name,
                     success_count
                 );
-            }
-
-            // Determine status but don't submit flags yet
-            use super::state::AttackState;
-            let status = if results.iter().all(|r| r.is_err()) {
-                AttackState::Errored(results.iter().filter_map(|r| r.clone().err()).collect())
-            } else if flags.is_empty() {
-                AttackState::Idle
+                // Update team status - no flags captured
+                if let Ok(mut teams) = teams_arc.lock() {
+                    if let Some(team) = teams.get_mut(idx) {
+                        team.status = AttackState::Idle;
+                    }
+                }
             } else {
-                // Only store flags in team status to indicate they're pending submission
-                AttackState::Submitting(flags)
-            };
-
-            // Update the team status
-            if let Ok(mut teams) = teams_arc.lock() {
-                if let Some(team) = teams.get_mut(idx) {
-                    team.status = status;
+                // All exploits failed
+                let errors = results.iter().filter_map(|r| r.clone().err()).collect();
+                if let Ok(mut teams) = teams_arc.lock() {
+                    if let Some(team) = teams.get_mut(idx) {
+                        team.status = AttackState::Errored(errors);
+                    }
                 }
             }
         }
 
-        // Submit all flags in one batch if we have any and submitter is configured
-        if !all_flags.is_empty() {
+        // For Batch mode: submit all collected flags at the end
+        if !all_flags.is_empty()
+            && submitter_config.as_ref().map_or(false, |cfg| {
+                cfg.mode == crate::structs::config::SubmitMode::Batch
+            })
+        {
             if let Some(submitter_config) = &submitter_config {
-                tracing::info!("Submitting all {} flags in a single batch", all_flags.len());
+                tracing::info!(
+                    "Submitting all {} flags in a single batch (Batch mode)",
+                    all_flags.len()
+                );
 
                 // Submit all flags at once
                 let total_points = runner::submit_flags(submitter_config, all_flags).await;
@@ -492,15 +568,10 @@ pub fn attack_all_teams(state: &mut AttackerUI) {
                     "Batch flag submission completed with {} total points",
                     total_points
                 );
-            } else {
-                tracing::warn!(
-                    "No submitter configured, can't submit {} flags",
-                    all_flags.len()
-                );
             }
         }
 
-        tracing::info!("All team attacks and flag submission completed");
+        tracing::info!("All team attacks and flag submissions completed");
     });
 }
 
@@ -528,7 +599,7 @@ pub fn toggle_auto_attack(state: &mut AttackerUI) {
 pub fn attack_all_teams_loop(state: &mut AttackerUI) {
     // Set status bar message to indicate auto-attack
     if state.auto_attack_enabled {
-        let loop_info = match &state.config.r#loop {
+        let loop_info = match &state.config.attacker.r#loop {
             Some(loop_config) => format!(
                 "Auto-attack running (every {}s{})",
                 loop_config.every,

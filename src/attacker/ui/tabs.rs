@@ -8,6 +8,7 @@ pub enum TabState {
     Teams,
     Logs,
     Exploits,
+    Settings,
 }
 
 impl TabState {
@@ -29,16 +30,25 @@ impl TabState {
                     Line::from("Logs")
                 },
                 Line::from("Exploits"),
+                Line::from("Settings"),
             ],
             TabState::Logs => vec![
                 Line::from("Teams"),
                 Line::from("Logs"),
                 Line::from("Exploits"),
+                Line::from("Settings"),
             ],
             TabState::Exploits => vec![
                 Line::from("Teams"),
                 Line::from("Logs"),
                 Line::from("Exploits"),
+                Line::from("Settings"),
+            ],
+            TabState::Settings => vec![
+                Line::from("Teams"),
+                Line::from("Logs"),
+                Line::from("Exploits"),
+                Line::from("Settings"),
             ],
         }
     }
@@ -49,6 +59,7 @@ impl TabState {
             TabState::Teams => 0,
             TabState::Logs => 1,
             TabState::Exploits => 2,
+            TabState::Settings => 3,
         }
     }
 
@@ -58,6 +69,7 @@ impl TabState {
             0 => TabState::Teams,
             1 => TabState::Logs,
             2 => TabState::Exploits,
+            3 => TabState::Settings,
             _ => TabState::Teams, // Default
         }
     }

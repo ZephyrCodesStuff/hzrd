@@ -123,6 +123,37 @@ impl FromStr for SubmitterType {
     }
 }
 
+/// Submission mode (Batch or Instant)
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SubmitMode {
+    /// Submit all flags at once, after ending.
+    ///
+    /// This is useful to avoid rate limits with large numbers of teams.
+    Batch,
+
+    /// Submit all flags after running all of the exploits.
+    Grouped,
+
+    /// Submit all flags as soon as possible.
+    ///
+    /// This is useful when you have little time and want to make sure you score in any points.
+    Instant,
+}
+
+impl FromStr for SubmitMode {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "batch" => Ok(Self::Batch),
+            "grouped" => Ok(Self::Grouped),
+            "instant" => Ok(Self::Instant),
+            _ => Err(ConfigError::InvalidSubmitMode(s.to_string())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SubmitterConfig {
     /// Chosen configuration type
@@ -133,6 +164,9 @@ pub struct SubmitterConfig {
 
     /// Configurations for submission system (TCP, HTTP, etc.).
     pub config: SubmissionConfig,
+
+    /// Submission mode (Batch or Instant)
+    pub mode: SubmitMode,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -297,6 +331,7 @@ impl Default for Config {
                     }),
                     http: None,
                 },
+                mode: SubmitMode::Batch,
             }),
         }
     }

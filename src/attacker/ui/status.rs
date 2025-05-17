@@ -29,17 +29,15 @@ pub struct StatusBar {
     pub message: String,
     pub status_type: StatusType,
     pub start_time: Instant,
-    pub attacker_config: crate::structs::config::AttackerConfig,
 }
 
 impl StatusBar {
     /// Create a new status bar with default values
-    pub fn new(attacker_config: crate::structs::config::AttackerConfig) -> Self {
+    pub fn new() -> Self {
         Self {
             message: "Idle - Ready to attack".to_string(),
             status_type: StatusType::Idle,
             start_time: Instant::now(),
-            attacker_config,
         }
     }
 
