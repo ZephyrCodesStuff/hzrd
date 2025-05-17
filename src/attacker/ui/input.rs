@@ -1,7 +1,7 @@
 use super::state::AttackerUI;
 use super::tabs::TabState;
+use crate::attacker::runner;
 use crate::structs::config::Config;
-use crate::{attacker::runner, structs::config::SubmitMode};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::sync::Arc;
@@ -358,11 +358,6 @@ pub fn attack_team(state: &mut AttackerUI, team_idx: usize) {
 
         // Submit flags if we have them and a submitter is configured
         if let Some(submitter_config) = submitter_config {
-            // Grouped: submit for each team, after all exploits
-            if submitter_config.mode != SubmitMode::Grouped {
-                return;
-            }
-
             if flags.is_empty() {
                 tracing::warn!("No flags to submit for team {}", team_name);
                 return;
