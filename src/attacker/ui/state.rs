@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    sync::{mpsc, Arc, Mutex},
+    sync::{mpsc, Arc, Mutex, RwLock},
 };
 
 use futures::FutureExt;
@@ -72,7 +72,7 @@ pub struct AttackerUI {
     pub running: bool,
 
     // Team state
-    pub teams: Arc<Mutex<Vec<TeamStatus>>>,
+    pub teams: Arc<RwLock<Vec<TeamStatus>>>,
     pub table_state: TableState,
 
     // Exploit state
@@ -116,7 +116,7 @@ impl AttackerUI {
             submitter_config: config.submitter.clone(),
             terminal,
             running: true,
-            teams: Arc::new(Mutex::new(teams)),
+            teams: Arc::new(RwLock::new(teams)),
             table_state: TableState::default(),
             exploit_state: TableState::default(),
             auto_attack_enabled: false,
@@ -266,7 +266,7 @@ pub async fn run_ui(args: Args, config: &Config) {
     tracing::info!("Attacker UI started successfully");
     tracing::debug!(
         "Loaded {} teams from configuration",
-        state.teams.lock().unwrap().len()
+        state.teams.read().unwrap().len()
     );
 
     // Main UI loop

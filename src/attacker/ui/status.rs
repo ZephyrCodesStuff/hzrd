@@ -1,6 +1,6 @@
 use super::state::{AttackState, TeamStatus};
 use ratatui::style::Color;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 /// Status types for the status bar with color coding
@@ -49,8 +49,8 @@ impl StatusBar {
     }
 
     /// Update status based on team states
-    pub fn update_from_teams(&mut self, teams: &Arc<Mutex<Vec<TeamStatus>>>) {
-        let teams_lock = teams.lock().unwrap();
+    pub fn update_from_teams(&mut self, teams: &Arc<RwLock<Vec<TeamStatus>>>) {
+        let teams_lock = teams.read().unwrap();
         let (idle, attacking, submitting, success) = self.get_team_stats(&teams_lock);
         let total = idle + attacking + submitting + success;
 

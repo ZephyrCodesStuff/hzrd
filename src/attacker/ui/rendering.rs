@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::{self, Instant},
 };
 
@@ -132,7 +132,7 @@ fn render_help(f: &mut Frame, area: Rect) {
 pub fn render_ui_with_state(
     f: &mut Frame,
     config: &Config,
-    teams: &Arc<Mutex<Vec<TeamStatus>>>,
+    teams: &Arc<RwLock<Vec<TeamStatus>>>,
     team_state: &mut TableState,
     exploit_state: &mut TableState,
     active_tab: TabState,
@@ -175,7 +175,7 @@ pub fn render_ui_with_state(
 /// Render the teams tab with state components
 fn render_teams_tab_with_state(
     f: &mut Frame,
-    teams: &Arc<Mutex<Vec<TeamStatus>>>,
+    teams: &Arc<RwLock<Vec<TeamStatus>>>,
     table_state: &mut TableState,
     area: Rect,
 ) {
@@ -192,7 +192,7 @@ fn render_teams_tab_with_state(
     );
 
     // Table rows
-    let teams_lock = teams.lock().unwrap();
+    let teams_lock = teams.read().unwrap();
     let rows = teams_lock.iter().map(|team| {
         let status_style = get_status_style(&team);
 

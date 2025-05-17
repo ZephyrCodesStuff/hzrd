@@ -1,11 +1,9 @@
-use std::{ffi::CString, fs, path::PathBuf};
+use std::{ffi::CString, fs, path::PathBuf, process::Stdio};
 
 use anyhow::Result;
-use pyo3::{
-    types::{PyAnyMethods, PyModule},
-    PyErr, Python,
-};
+use futures::future::join_all;
 use regex::Regex;
+use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -39,68 +37,83 @@ macro_rules! progress_bar {
 /// - Or an error
 pub type AttackResult = Result<Vec<String>, AttackError>;
 
-/// Attack a single team with exploits running in parallel using Rayon
-pub fn attack_team_parallel(team: &Team, config: &AttackerConfig) -> Vec<AttackResult> {
-    use rayon::prelude::*;
-
+/// Attack a single team with exploits running in parallel using Tokio tasks
+pub async fn attack_team_parallel(team: &Team, config: &AttackerConfig) -> Vec<AttackResult> {
     let scripts_to_run = get_exploits(config);
     let flag_regex = Regex::new(&config.flag).expect("Invalid flag regex");
 
     // Find the team details
-    let Some((team_name, team)) = config
+    let Some((team_name, team_details)) = config
         .teams
         .iter()
         .find(|(_, t)| t.ip == team.ip)
-        .map(|(name, team)| (name.clone(), team.clone())) else
-    {
+        .map(|(name, t_details)| (name.clone(), t_details.clone()))
+    else {
         error!("The specified team does not exist ({})", team.ip);
         return vec![Err(AttackError::NoSuchTeam(team.ip.to_string()))];
     };
 
-    // Run exploits in parallel against the team
-    let results: Vec<AttackResult> = scripts_to_run
-        .par_iter() // Use par_iter for parallel execution
-        .map(|script_path| {
-            let flag_regex = flag_regex.clone();
-            let team_name = team_name.clone();
-            let team = team.clone();
+    // Determine Python executable and PYTHONHOME
+    let python_executable: String;
+    let python_home_env: Option<String>;
 
-            // Release the GIL for each exploit
-            Python::with_gil(|py| {
-                match run_exploit(py, &team_name, &team, &script_path, &flag_regex) {
-                    Ok(captures) => {
-                        debug!("Captured flags: {:?}", captures);
+    if let Ok(venv_path_str) = std::env::var("VIRTUAL_ENV") {
+        let venv_path_buf = PathBuf::from(venv_path_str.clone());
+        python_executable = venv_path_buf
+            .join("bin")
+            .join("python3")
+            .to_string_lossy()
+            .into_owned();
+        python_home_env = Some(venv_path_str);
+        info!("Using Python from venv: {}", python_executable);
+        if let Some(ph) = &python_home_env {
+            info!("Setting PYTHONHOME to: {}", ph);
+        }
+    } else {
+        python_executable = "python3".to_string();
+        python_home_env = None;
+        warn!("VIRTUAL_ENV not set. Using system '{}'. PYTHONHOME not set. This might cause issues if scripts rely on a specific venv.", python_executable);
+    }
 
-                        if captures.is_empty() {
-                            warn!(
-                                "The exploit {} did not work on {} (\"{}\")",
-                                script_path.display(),
-                                team.ip,
-                                team_name
-                            );
+    let mut futures = Vec::new();
 
-                            Err(AttackError::NoCaptures)
-                        } else {
-                            info!("Flag captured on {} (\"{}\")!", team.ip, team_name);
+    for script_path in scripts_to_run {
+        let tn_clone = team_name.clone();
+        let td_clone = team_details.clone();
+        let sp_clone = script_path.clone();
+        let fr_clone = flag_regex.clone();
+        let pe_clone = python_executable.clone();
+        let phe_clone = python_home_env.clone();
 
-                            // Return the captured flags
-                            Ok(captures)
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to run exploit on {} (\"{}\"): {e:#}",
-                            team.ip, team_name
-                        );
+        futures.push(tokio::spawn(async move {
+            run_exploit(
+                &tn_clone,
+                &td_clone,
+                &sp_clone,
+                &fr_clone,
+                &pe_clone,
+                phe_clone.as_deref(),
+            )
+            .await
+        }));
+    }
 
-                        Err(e)
-                    }
-                }
-            })
+    let results_from_join: Vec<Result<AttackResult, tokio::task::JoinError>> =
+        join_all(futures).await;
+
+    results_from_join
+        .into_iter()
+        .map(|join_result| match join_result {
+            Ok(attack_result) => attack_result,
+            Err(join_error) => {
+                error!("A spawned attack task failed to complete: {}", join_error);
+                Err(AttackError::ScriptExecutionError {
+                    script: "Unknown (task join error)".to_string(),
+                    message: format!("Task execution failed: {}", join_error),
+                })
+            }
         })
-        .collect();
-
-    results
+        .collect()
 }
 
 /// Scan for available exploits and populate the exploits list
@@ -159,146 +172,110 @@ fn get_exploits(config: &AttackerConfig) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Run a single exploit script against a team.
-fn run_exploit(
-    py: Python<'_>,
+/// Run a single exploit script against a team using tokio::process::Command.
+async fn run_exploit(
     team_name: &String,
     team: &Team,
-    script: &PathBuf,
+    script_path: &PathBuf,
     flag_regex: &Regex,
+    python_executable: &str,
+    python_home_val: Option<&str>,
 ) -> Result<Vec<String>, AttackError> {
+    let script_file_name = script_path
+        .file_name()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_string();
     info!(
-        "Running exploit {} on team {} (\"{}\")",
-        script.display(),
+        "Running exploit {} on team {} (\"{}\") using Python interpreter: {}",
+        script_path.display(),
         team.ip,
-        team_name
+        team_name,
+        python_executable
     );
 
-    let script_content =
-        fs::read_to_string(script).map_err(|_| AttackError::NoSuchExploit(script.clone()))?;
+    let mut command = Command::new(python_executable);
+    command
+        .arg(script_path)
+        .arg(team.ip.to_string())
+        .env("PWNLIB_NOTERM", "1")
+        .env("NO_COLOR", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    let script_content = CString::new(script_content).unwrap();
-    let script_name = CString::new(
-        script
-            .file_name()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap()
-            .to_string(),
-    )
-    .unwrap();
-
-    // IMPORTANT: set `PWNLIB_NOTERM` and `NO_COLOR` to `1` or pwntools will try to attach to a curses-like terminal,
-    //            which we don't have in our virtual interpreter environment.
-    unsafe {
-        std::env::set_var("PWNLIB_NOTERM", "1");
-        std::env::set_var("NO_COLOR", "1");
-    }
-
-    // Redirect stdout to capture output
-    let sys = py.import("sys").unwrap();
-    let io = py.import("io").unwrap();
-    let output = io.call_method0("StringIO").unwrap();
-    sys.setattr("stdout", output.clone()).unwrap();
-
-    // Set the venv path from the current environment
-    if let Ok(venv_path) = std::env::var("VIRTUAL_ENV") {
-        std::env::set_var("PYTHONHOME", venv_path);
-        info!(
-            "Using virtual environment at {}",
-            std::env::var("PYTHONHOME").unwrap()
-        );
+    if let Some(ph_val) = python_home_val {
+        command.env("PYTHONHOME", ph_val);
+        debug!("PYTHONHOME set for script {}: {}", script_file_name, ph_val);
     } else {
-        warn!("VIRTUAL_ENV not set, using system Python. This will *definitely* cause issues.");
+        debug!("PYTHONHOME not set for script {}", script_file_name);
     }
 
-    // Load and execute the script with proper exception handling
-    let result = PyModule::from_code(py, &script_content, &script_name, &script_name);
-    let module = match result {
-        Ok(module) => module,
-        Err(err) => {
-            // Clear the Python exception state
-            if PyErr::occurred(py) {
-                PyErr::fetch(py);
-            }
-
-            let error_message = err.to_string();
-            error!(
-                "Failed to load script {}: {}",
-                script.display(),
-                error_message
-            );
-            return Err(AttackError::ScriptExecutionError {
-                script: script
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-                message: error_message,
-            });
+    let child_process = command.spawn().map_err(|e| {
+        error!(
+            "Failed to spawn script process for {}: {}",
+            script_path.display(),
+            e
+        );
+        AttackError::ScriptExecutionError {
+            script: script_file_name.clone(),
+            message: format!("Failed to spawn script process: {}", e),
         }
-    };
+    })?;
 
-    // Execute the exploit function with proper error handling
-    match module.getattr("exploit") {
-        Ok(exploit_fn) => {
-            let args = (team.ip.to_string(),);
-            match exploit_fn.call1(args) {
-                Ok(_) => {
-                    // Function executed successfully
-                }
-                Err(err) => {
-                    // Clear the Python exception state
-                    if PyErr::occurred(py) {
-                        PyErr::fetch(py);
-                    }
-
-                    let error_message = err.to_string();
-                    error!("Error executing {}: {}", script.display(), error_message);
-                    return Err(AttackError::ScriptExecutionError {
-                        script: script
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_str()
-                            .unwrap()
-                            .to_string(),
-                        message: error_message,
-                    });
-                }
-            }
+    let output = child_process.wait_with_output().await.map_err(|e| {
+        error!(
+            "Error waiting for script {} to finish: {}",
+            script_path.display(),
+            e
+        );
+        AttackError::ScriptExecutionError {
+            script: script_file_name.clone(),
+            message: format!("Error waiting for script execution: {}", e),
         }
-        Err(_) => {
-            // Clear the Python exception state
-            if PyErr::occurred(py) {
-                PyErr::fetch(py);
-            }
+    })?;
 
-            error!(
-                "Script {} does not have an 'exploit' function",
-                script.display()
-            );
-            return Err(AttackError::ScriptExecutionError {
-                script: script
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-                message: "Missing 'exploit' function".to_string(),
-            });
-        }
+    if !output.status.success() {
+        let stderr_output = String::from_utf8_lossy(&output.stderr);
+        error!(
+            "Exploit script {} for team {} (IP: {}) failed with status {:?}. Stderr:\n{}",
+            script_path.display(),
+            team_name,
+            team.ip,
+            output.status,
+            stderr_output
+        );
+        return Err(AttackError::ScriptExecutionError {
+            script: script_file_name,
+            message: format!(
+                "Script execution failed (status: {:?}): {}",
+                output.status,
+                stderr_output.trim_end()
+            ),
+        });
     }
 
-    // After script execution, capture everything printed to stdout
-    let captured_output: String = output.call_method0("getvalue").unwrap().extract().unwrap();
-    debug!("Captured output:\n\n{}", captured_output);
+    let captured_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    debug!(
+        "Captured stdout from {}:\n---\n{}\n---",
+        script_path.display(),
+        captured_stdout
+    );
 
-    // Apply the regex to extract flags from stdout
-    Ok(flag_regex
-        .captures_iter(&captured_output)
+    let flags: Vec<String> = flag_regex
+        .captures_iter(&captured_stdout)
         .map(|capture| capture[0].to_string())
-        .collect())
+        .collect();
+
+    if flags.is_empty() && output.status.success() {
+        debug!(
+            "Exploit {} on {} completed successfully but found no flags matching regex.",
+            script_path.display(),
+            team.ip
+        );
+    }
+
+    Ok(flags)
 }
 
 pub async fn submit_flags(config: &SubmitterConfig, flags: Vec<String>) -> usize {
