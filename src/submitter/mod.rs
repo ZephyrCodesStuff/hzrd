@@ -19,7 +19,7 @@ pub async fn submit_flags(
                 .as_ref()
                 .ok_or_else(|| SubmitError::NoSubmitter)?;
 
-            tcp::submit_flags_tcp(tcp_config, &config.database, &flags).await
+            tcp::submit_flags_tcp(tcp_config, &config.database, &flags)
         }
         SubmitterType::Http => {
             let http_config = config

@@ -1,8 +1,10 @@
 use super::state::AttackerUI;
 use super::tabs::TabState;
 use crate::attacker::runner;
+use crate::attacker::ui::state::AttackState;
 use crate::structs::config::Config;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::sync::Arc;
 
 /// Handle keyboard inputs in the UI
@@ -284,7 +286,7 @@ pub fn attack_team(state: &mut AttackerUI, team_idx: usize) {
             team_name,
             team_ip
         );
-        let results = runner::attack_team_parallel(&team_to_attack, &config).await;
+        let results = runner::attack_team_parallel(&team_to_attack, &config);
 
         // Count successes and errors
         let success_count = results.iter().filter(|r| r.is_ok()).count();
@@ -361,7 +363,7 @@ pub fn attack_team(state: &mut AttackerUI, team_idx: usize) {
     });
 }
 
-/// Attack all teams in parallel and submit flags sequentially
+/// Attack all teams in parallel and submit flags in a single batch at the end
 pub fn attack_all_teams(state: &mut AttackerUI) {
     let teams_to_attack = {
         let mut teams = state.teams.lock().unwrap();
@@ -385,137 +387,120 @@ pub fn attack_all_teams(state: &mut AttackerUI) {
     let submitter_config = state.submitter_config.clone();
     let teams_arc = Arc::clone(&state.teams);
 
-    // Spawn a task to handle the attack and sequential flag submission
+    // Spawn a task to handle the attack and batch flag submission
     state.runtime.spawn(async move {
-        use super::state::AttackState;
-        use futures::future::join_all;
-
-        // Prepare tasks to attack all teams in parallel
-        let mut attack_tasks = Vec::new();
-
-        for (idx, team) in teams_to_attack.iter().enumerate() {
-            // Convert to Team struct for the runner
-            let team_to_attack = crate::structs::team::Team {
-                ip: team.ip.parse().unwrap(),
-                nop: None,
-            };
-
-            // Create a task for each team
-            let team_config = config.clone();
-            let team_name = team.name.clone();
-            let team_ip = team.ip.clone();
-            let team_arc = Arc::clone(&teams_arc);
-
-            // Add task to our collection
-            attack_tasks.push(async move {
-                tracing::debug!(
-                    "Running attack scripts against team {} ({})",
-                    team_name,
-                    team_ip
-                );
-
-                // Run attack and gather results
-                let results = runner::attack_team_parallel(&team_to_attack, &team_config).await;
-
-                // Count successes and errors
-                let success_count = results.iter().filter(|r| r.is_ok()).count();
-                let error_count = results.iter().filter(|r| r.is_err()).count();
-
-                // Log errors specifically
-                for (i, result) in results.iter().enumerate() {
-                    if let Err(err) = result {
-                        tracing::error!("Exploit {} failed against {}: {}", i + 1, team_name, err);
-                    }
-                }
-
-                // Collect flags
-                let flags = results
-                    .iter()
-                    .filter_map(|r| r.clone().ok())
-                    .flat_map(|r| r)
-                    .collect::<Vec<_>>();
-
-                tracing::info!(
-                    "Attack on team {} completed: {} scripts succeeded, {} scripts failed",
-                    team_name,
-                    success_count,
-                    error_count
-                );
-
-                if !flags.is_empty() {
-                    tracing::info!("Captured {} flags from team {}", flags.len(), team_name);
-                } else if success_count > 0 {
-                    tracing::warn!(
-                        "No flags captured from team {} despite {} successful scripts",
-                        team_name,
-                        success_count
-                    );
-                }
-
-                // Determine status (will be updated to Success after submission)
-                let status = if results.iter().all(|r| r.is_err()) {
-                    AttackState::Errored(results.iter().filter_map(|r| r.clone().err()).collect())
-                } else {
-                    if flags.is_empty() {
-                        AttackState::Idle
-                    } else {
-                        AttackState::Submitting(flags.clone())
-                    }
+        // Process teams in parallel with rayon
+        let results: Vec<_> = teams_to_attack
+            .par_iter()
+            .enumerate()
+            .map(|(idx, team)| {
+                // Convert to Team struct for the runner
+                let team_to_attack = crate::structs::team::Team {
+                    ip: team.ip.parse().unwrap(),
+                    nop: None,
                 };
 
-                // Update the team status
-                if let Ok(mut teams) = team_arc.lock() {
-                    if let Some(team) = teams.get_mut(idx) {
-                        team.status = status.clone();
-                    }
-                }
+                let team_name = team.name.clone();
+                let team_ip = team.ip.clone();
 
-                // Return team info and flags for later submission
-                (team_name, flags, idx)
-            });
-        }
+                // Block on the attack function - not ideal but necessary for rayon
+                let results = runner::attack_team_parallel(&team_to_attack, &config);
 
-        // Run all attack tasks in parallel
-        let attack_results = join_all(attack_tasks).await;
+                (idx, team_name, team_ip, results)
+            })
+            .collect();
 
-        // Now submit all flags sequentially if a submitter is configured
-        if let Some(submitter_config) = submitter_config {
-            tracing::info!("Submitting all captured flags sequentially");
+        // Collect all flags from all teams before submission
+        let mut all_flags = Vec::new();
 
-            for (team_name, flags, idx) in attack_results {
-                if !flags.is_empty() {
-                    tracing::debug!("Submitting {} flags from team {}", flags.len(), team_name);
+        // Process the results and update team statuses
+        for (idx, team_name, _, results) in results {
+            // Count successes and errors
+            let success_count = results.iter().filter(|r| r.is_ok()).count();
+            let error_count = results.iter().filter(|r| r.is_err()).count();
 
-                    // Submit flags and get points
-                    let points = runner::submit_flags(&submitter_config, flags).await;
-
-                    // Update team status with points
-                    if let Ok(mut teams) = teams_arc.lock() {
-                        if let Some(team) = teams.get_mut(idx) {
-                            team.status = AttackState::Success(points);
-                        }
-                    }
-
-                    // Add small delay between submissions to avoid rate limiting
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            // Log errors specifically
+            for (i, result) in results.iter().enumerate() {
+                if let Err(err) = result {
+                    tracing::error!("Exploit {} failed against {}: {}", i + 1, team_name, err);
                 }
             }
 
-            tracing::info!("All flag submissions completed");
-        } else {
-            tracing::warn!("No submitter configured, flags were captured but not submitted");
+            // Collect flags
+            let flags = results
+                .iter()
+                .filter_map(|r| r.clone().ok())
+                .flat_map(|r| r)
+                .collect::<Vec<_>>();
 
-            // Update all teams with flags to Idle since we can't submit
-            for (_, flags, idx) in attack_results {
-                if !flags.is_empty() {
-                    if let Ok(mut teams) = teams_arc.lock() {
-                        if let Some(team) = teams.get_mut(idx) {
-                            team.status = AttackState::Idle;
-                        }
-                    }
+            tracing::info!(
+                "Attack on team {} completed: {} scripts succeeded, {} scripts failed",
+                team_name,
+                success_count,
+                error_count
+            );
+
+            if !flags.is_empty() {
+                tracing::info!("Captured {} flags from team {}", flags.len(), team_name);
+                // Add these flags to our consolidated list
+                all_flags.extend(flags.clone());
+            } else if success_count > 0 {
+                tracing::warn!(
+                    "No flags captured from team {} despite {} successful scripts",
+                    team_name,
+                    success_count
+                );
+            }
+
+            // Determine status but don't submit flags yet
+            use super::state::AttackState;
+            let status = if results.iter().all(|r| r.is_err()) {
+                AttackState::Errored(results.iter().filter_map(|r| r.clone().err()).collect())
+            } else if flags.is_empty() {
+                AttackState::Idle
+            } else {
+                // Only store flags in team status to indicate they're pending submission
+                AttackState::Submitting(flags)
+            };
+
+            // Update the team status
+            if let Ok(mut teams) = teams_arc.lock() {
+                if let Some(team) = teams.get_mut(idx) {
+                    team.status = status;
                 }
             }
         }
+
+        // Submit all flags in one batch if we have any and submitter is configured
+        if !all_flags.is_empty() {
+            if let Some(submitter_config) = &submitter_config {
+                tracing::info!("Submitting all {} flags in a single batch", all_flags.len());
+
+                // Submit all flags at once
+                let total_points = runner::submit_flags(submitter_config, all_flags).await;
+
+                // Update all teams that have flags with success status
+                if let Ok(mut teams) = teams_arc.lock() {
+                    for team in teams.iter_mut() {
+                        if let AttackState::Submitting(_) = &team.status {
+                            team.status = AttackState::Success(total_points);
+                        }
+                    }
+                }
+
+                tracing::info!(
+                    "Batch flag submission completed with {} total points",
+                    total_points
+                );
+            } else {
+                tracing::warn!(
+                    "No submitter configured, can't submit {} flags",
+                    all_flags.len()
+                );
+            }
+        }
+
+        tracing::info!("All team attacks and flag submission completed");
     });
 }
 

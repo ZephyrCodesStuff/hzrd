@@ -1,9 +1,10 @@
-use anyhow::Result;
-use regex::Regex;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
+use std::{
+    io::{BufRead, BufReader, Write},
     net::TcpStream,
 };
+
+use anyhow::Result;
+use regex::Regex;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -23,7 +24,7 @@ static MSG_FLAG_FAILURE: [&str; 3] = ["invalid", "too old", "your own"];
 static FLAG_POINTS_REGEX: &str = "[\\d,.]+";
 
 // Submit flags via TCP with database integration
-pub async fn submit_flags_tcp(
+pub fn submit_flags_tcp(
     tcp_config: &SubmitterTCPConfig,
     db_config: &DatabaseConfig,
     flags: &[String],
@@ -48,19 +49,14 @@ pub async fn submit_flags_tcp(
     info!("Submitting {} pending flags", pending_flags.len());
 
     // Connect to TCP server
-    let mut stream = TcpStream::connect((tcp_config.host, tcp_config.port))
-        .await
+    let stream = TcpStream::connect((tcp_config.host, tcp_config.port))
         .map_err(SubmitError::ServiceConnection)?;
-
-    let (rx, mut tx) = stream.split();
+    let mut stream = BufReader::new(stream);
 
     // Read first line for greetings
     let mut line = String::new();
-    let mut reader = tokio::io::BufReader::new(rx);
-
-    reader
+    stream
         .read_line(&mut line)
-        .await
         .map_err(SubmitError::ServiceCommunication)?;
 
     if !MSG_GREETINGS
@@ -71,19 +67,20 @@ pub async fn submit_flags_tcp(
     }
 
     // Send team token
-    tx.write(format!("{}\n", tcp_config.token).as_bytes())
-        .await
+    stream
+        .get_mut()
+        .write(format!("{}\n", tcp_config.token).as_bytes())
         .map_err(SubmitError::ServiceCommunication)?;
 
-    tx.flush()
-        .await
+    stream
+        .get_mut()
+        .flush()
         .map_err(SubmitError::ServiceCommunication)?;
 
     // Read for start message
     let mut line = String::new();
-    reader
+    stream
         .read_line(&mut line)
-        .await
         .map_err(SubmitError::ServiceCommunication)?;
 
     if !MSG_READY
@@ -100,19 +97,20 @@ pub async fn submit_flags_tcp(
     let pending_flags_len = pending_flags.len();
     for flag in pending_flags {
         // Send flag
-        tx.write(format!("{flag}\n").as_bytes())
-            .await
+        stream
+            .get_mut()
+            .write(format!("{flag}\n").as_bytes())
             .map_err(SubmitError::ServiceCommunication)?;
 
-        tx.flush()
-            .await
+        stream
+            .get_mut()
+            .flush()
             .map_err(SubmitError::ServiceCommunication)?;
 
         // Read response
         let mut line = String::new();
-        reader
+        stream
             .read_line(&mut line)
-            .await
             .map_err(SubmitError::ServiceCommunication)?;
 
         // Check if response indicates success or failure

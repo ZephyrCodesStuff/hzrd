@@ -40,7 +40,7 @@ macro_rules! progress_bar {
 pub type AttackResult = Result<Vec<String>, AttackError>;
 
 /// Attack a single team with exploits running in parallel using Rayon
-pub async fn attack_team_parallel(team: &Team, config: &AttackerConfig) -> Vec<AttackResult> {
+pub fn attack_team_parallel(team: &Team, config: &AttackerConfig) -> Vec<AttackResult> {
     use rayon::prelude::*;
 
     let scripts_to_run = get_exploits(config);
